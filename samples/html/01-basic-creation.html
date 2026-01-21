@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>01 - Basic Stream Creation</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --code-bg: #0d1b2a;
+      --success: #4ecca3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    .subtitle { color: var(--text-muted); margin-bottom: 2rem; }
+    a { color: var(--accent); }
+    .output {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      min-height: 400px;
+      overflow: auto;
+    }
+    .section { color: var(--accent); font-weight: bold; }
+    .success { color: var(--success); }
+    .error { color: #ff6b6b; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { margin-right: 1rem; }
+    .run-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .run-btn:hover { opacity: 0.9; }
+    .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Home</a>
+      <a href="02-consumption.html">Next: Consumption</a>
+    </nav>
+    
+    <h1>01 - Basic Stream Creation</h1>
+    <p class="subtitle">Creating streams with Stream.from(), Stream.pull(), arrays, and generators</p>
+    
+    <button id="runBtn" class="run-btn">Run Again</button>
+    <div id="output" class="output">Running examples...</div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    
+    const output = document.getElementById('output');
+    output.textContent = '';
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+    }
+    
+    function section(title) {
+      log(`\n<span class="section">═══ ${title} ═══</span>\n`);
+    }
+    
+    function success(msg) {
+      log(`<span class="success">✓ ${msg}</span>`);
+    }
+    
+    // Allow HTML in output
+    function render() {
+      output.innerHTML = output.textContent;
+    }
+    
+    async function main() {
+      try {
+        // ============================================================
+        // Stream.from() - Create streams from existing data
+        // ============================================================
+        section('Stream.from() - Creating streams from data');
+        
+        // From a string (UTF-8 encoded)
+        {
+          const text = await Stream.text(Stream.from('Hello, World!'));
+          log(`From string: "${text}"`);
+          success('String source works');
+        }
+        
+        // From a Uint8Array
+        {
+          const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+          const text = await Stream.text(Stream.from(bytes));
+          log(`From Uint8Array: "${text}"`);
+          success('Uint8Array source works');
+        }
+        
+        // From an ArrayBuffer
+        {
+          const encoder = new TextEncoder();
+          const buffer = encoder.encode('From ArrayBuffer').buffer;
+          const text = await Stream.text(Stream.from(buffer));
+          log(`From ArrayBuffer: "${text}"`);
+          success('ArrayBuffer source works');
+        }
+        
+        // From an array of chunks
+        {
+          const chunks = ['chunk1', ' ', 'chunk2', ' ', 'chunk3'];
+          const text = await Stream.text(Stream.from(chunks));
+          log(`From array: "${text}"`);
+          success('Array source works');
+        }
+        
+        // From a generator function
+        {
+          function* generateChunks() {
+            yield 'generated';
+            yield ' ';
+            yield 'chunks';
+          }
+          const text = await Stream.text(Stream.from(generateChunks()));
+          log(`From generator: "${text}"`);
+          success('Generator source works');
+        }
+        
+        // ============================================================
+        // Empty streams
+        // ============================================================
+        section('Empty streams');
+        
+        {
+          const bytes = await Stream.bytes(Stream.from([]));
+          log(`Empty stream bytes length: ${bytes.length}`);
+          
+          // Iteration yields nothing
+          const empty = Stream.from([]);
+          let count = 0;
+          for await (const chunks of empty) {
+            count += chunks.length;
+          }
+          log(`Empty stream chunk count: ${count}`);
+          success('Empty streams work');
+        }
+        
+        // ============================================================
+        // Stream.pull() - Pull-through pipelines
+        // ============================================================
+        section('Stream.pull() - Pull pipelines');
+        
+        // Sync generator as source
+        {
+          function* lines() {
+            yield 'line 1\n';
+            yield 'line 2\n';
+            yield 'line 3';
+          }
+          
+          const readable = Stream.pull(lines());
+          const text = await Stream.text(readable);
+          log(`From sync generator:\n${text}`);
+          success('Sync generator source works');
+        }
+        
+        // Async generator as source
+        {
+          async function* asyncLines() {
+            yield 'async 1\n';
+            await new Promise(r => setTimeout(r, 10));
+            yield 'async 2\n';
+            await new Promise(r => setTimeout(r, 10));
+            yield 'async 3';
+          }
+          
+          const readable = Stream.pull(asyncLines());
+          const text = await Stream.text(readable);
+          log(`From async generator:\n${text}`);
+          success('Async generator source works');
+        }
+        
+        // ============================================================
+        // Stream.fromSync() - Synchronous streams
+        // ============================================================
+        section('Stream.fromSync() - Synchronous streams');
+        
+        {
+          const readable = Stream.fromSync(['sync', ' ', 'data']);
+          const text = await Stream.text(readable);
+          log(`From sync source: "${text}"`);
+          success('fromSync() works');
+        }
+        
+        // ============================================================
+        section('All examples completed successfully!');
+        
+      } catch (err) {
+        log(`\n<span class="error">Error: ${err.message}</span>`);
+        console.error(err);
+      }
+      
+      render();
+    }
+    
+    main();
+    
+    document.getElementById('runBtn').addEventListener('click', () => {
+      output.textContent = 'Running examples...\n';
+      main();
+    });
+  </script>
+</body>
+</html>

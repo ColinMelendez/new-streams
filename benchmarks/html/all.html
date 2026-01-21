@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>All Benchmarks</title>
+  <style id="styles"></style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Benchmarks</a>
+    </nav>
+    
+    <h1>All Benchmarks</h1>
+    <p class="subtitle">Run all benchmarks sequentially and display combined results</p>
+    
+    <div>
+      <button id="runBtn">Run All Benchmarks</button>
+    </div>
+    
+    <div id="status" class="status" style="display: none;"></div>
+    
+    <h2>Summary</h2>
+    <div id="summary" class="output" style="min-height: 100px;">
+      Click "Run All Benchmarks" to start
+    </div>
+    
+    <h2>All Results</h2>
+    <table class="results-table" id="resultsTable">
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Test</th>
+          <th>New Streams</th>
+          <th>Web Streams</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+      </tbody>
+    </table>
+    
+    <h2>Raw Output</h2>
+    <pre id="output" class="output"></pre>
+    
+    <div class="info" style="margin-top: 2rem; background: var(--code-bg); border-radius: 8px; padding: 1rem 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+      <strong style="color: var(--text);">Note:</strong> These benchmarks compare a pure JavaScript/TypeScript implementation of the new Streams API against the browser's fully optimized native C++ implementation of Web Streams. Results should be interpreted with this context in mind - competitive performance from a JS implementation is a positive signal, and a native implementation of the new API would likely perform significantly better.
+    </div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    import { bench, benchSync, benchmarkStyles, generateChunks } from './bench-utils.js';
+    import {
+      generateTextChunks,
+      // Throughput
+      newStreamPushThroughput,
+      webStreamPushThroughput,
+      newStreamFromArray,
+      webStreamFromArray,
+      // Transforms
+      newStreamSingleTransform,
+      webStreamSingleTransform,
+      newStreamTripleTransform,
+      webStreamTripleTransform,
+      // Consumption
+      newStreamBytes,
+      webStreamBytes,
+      newStreamText,
+      webStreamText,
+      // Branching
+      newStreamBroadcast2,
+      webStreamTee2,
+      // Sync pipeline
+      newStreamSyncPipeline,
+      newStreamAsyncPipeline
+    } from './benchmarks.js';
+    
+    // Apply styles
+    document.getElementById('styles').textContent = benchmarkStyles;
+    
+    const output = document.getElementById('output');
+    const summary = document.getElementById('summary');
+    const status = document.getElementById('status');
+    const resultsBody = document.getElementById('resultsBody');
+    const runBtn = document.getElementById('runBtn');
+    
+    const allResults = [];
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+      output.scrollTop = output.scrollHeight;
+    }
+    
+    function setStatus(msg, type = 'running') {
+      status.style.display = 'block';
+      status.className = `status ${type}`;
+      status.textContent = msg;
+    }
+    
+    function addResult(category, name, newOps, webOps) {
+      const ratio = newOps / webOps;
+      const isFaster = ratio > 1;
+      
+      allResults.push({ category, name, newOps, webOps, ratio, isFaster });
+      
+      const row = document.createElement('tr');
+      const comparison = isFaster
+        ? `<span style="color: var(--success)">${ratio.toFixed(2)}x faster</span>`
+        : `<span style="color: var(--warning)">${(1/ratio).toFixed(2)}x slower</span>`;
+      
+      row.innerHTML = `
+        <td>${category}</td>
+        <td>${name}</td>
+        <td>${newOps.toFixed(1)} ops/s</td>
+        <td>${webOps.toFixed(1)} ops/s</td>
+        <td>${comparison}</td>
+      `;
+      resultsBody.appendChild(row);
+    }
+    
+    function updateSummary() {
+      const wins = allResults.filter(r => r.isFaster).length;
+      const losses = allResults.filter(r => !r.isFaster).length;
+      const avgRatio = allResults.reduce((sum, r) => sum + r.ratio, 0) / allResults.length;
+      
+      let summaryText = `Total benchmarks: ${allResults.length}\n`;
+      summaryText += `New Streams faster: ${wins}\n`;
+      summaryText += `Web Streams faster: ${losses}\n`;
+      summaryText += `\nAverage performance ratio: ${avgRatio.toFixed(2)}x\n`;
+      
+      if (avgRatio > 1) {
+        summaryText += `\nOverall: New Streams is ${avgRatio.toFixed(2)}x faster on average`;
+      } else {
+        summaryText += `\nOverall: Web Streams is ${(1/avgRatio).toFixed(2)}x faster on average`;
+      }
+      
+      summary.textContent = summaryText;
+    }
+    
+    // ========================================
+    // Throughput benchmarks
+    // ========================================
+    
+    async function runThroughputBenchmarks() {
+      log('\n=== THROUGHPUT BENCHMARKS ===\n');
+      
+      const chunks = generateChunks(1024, 100);
+      
+      // Push throughput
+      setStatus('Running throughput: push...');
+      
+      const newPush = await bench('New push', () => newStreamPushThroughput(Stream, chunks));
+      const webPush = await bench('Web push', () => webStreamPushThroughput(chunks));
+      
+      log(`Push: New ${newPush.ops.toFixed(1)} vs Web ${webPush.ops.toFixed(1)} ops/s`);
+      addResult('Throughput', 'Push', newPush.ops, webPush.ops);
+      
+      // From array
+      setStatus('Running throughput: from array...');
+      
+      const newFrom = await bench('New from', () => newStreamFromArray(Stream, chunks));
+      const webFrom = await bench('Web from', () => webStreamFromArray(chunks));
+      
+      log(`From Array: New ${newFrom.ops.toFixed(1)} vs Web ${webFrom.ops.toFixed(1)} ops/s`);
+      addResult('Throughput', 'From Array', newFrom.ops, webFrom.ops);
+    }
+    
+    // ========================================
+    // Transform benchmarks
+    // ========================================
+    
+    async function runTransformBenchmarks() {
+      log('\n=== TRANSFORM BENCHMARKS ===\n');
+      
+      // Use valid text for uppercase transforms
+      const chunks = generateTextChunks(256, 100);
+      
+      // Single transform
+      setStatus('Running transforms: single...');
+      
+      const newSingle = await bench('New 1x transform', () => newStreamSingleTransform(Stream, chunks));
+      const webSingle = await bench('Web 1x transform', () => webStreamSingleTransform(chunks));
+      
+      log(`1 Transform: New ${newSingle.ops.toFixed(1)} vs Web ${webSingle.ops.toFixed(1)} ops/s`);
+      addResult('Transforms', '1 Transform', newSingle.ops, webSingle.ops);
+      
+      // Triple transform
+      setStatus('Running transforms: triple...');
+      
+      const newTriple = await bench('New 3x transform', () => newStreamTripleTransform(Stream, chunks));
+      const webTriple = await bench('Web 3x transform', () => webStreamTripleTransform(chunks));
+      
+      log(`3 Transforms: New ${newTriple.ops.toFixed(1)} vs Web ${webTriple.ops.toFixed(1)} ops/s`);
+      addResult('Transforms', '3 Transforms', newTriple.ops, webTriple.ops);
+    }
+    
+    // ========================================
+    // Consumption benchmarks
+    // ========================================
+    
+    async function runConsumptionBenchmarks() {
+      log('\n=== CONSUMPTION BENCHMARKS ===\n');
+      
+      const chunks = generateChunks(1024, 100); // Binary data for bytes()
+      const textChunks = generateTextChunks(1024, 100); // Valid UTF-8 for text()
+      
+      // bytes()
+      setStatus('Running consumption: bytes()...');
+      
+      const newBytes = await bench('New bytes()', () => newStreamBytes(Stream, chunks));
+      const webBytes = await bench('Web bytes()', () => webStreamBytes(chunks));
+      
+      log(`bytes(): New ${newBytes.ops.toFixed(1)} vs Web ${webBytes.ops.toFixed(1)} ops/s`);
+      addResult('Consumption', 'bytes()', newBytes.ops, webBytes.ops);
+      
+      // text() - use valid UTF-8 text chunks
+      setStatus('Running consumption: text()...');
+      
+      const newText = await bench('New text()', () => newStreamText(Stream, textChunks));
+      const webText = await bench('Web text()', () => webStreamText(textChunks));
+      
+      log(`text(): New ${newText.ops.toFixed(1)} vs Web ${webText.ops.toFixed(1)} ops/s`);
+      addResult('Consumption', 'text()', newText.ops, webText.ops);
+    }
+    
+    // ========================================
+    // Branching benchmarks
+    // ========================================
+    
+    async function runBranchingBenchmarks() {
+      log('\n=== BRANCHING BENCHMARKS ===\n');
+      
+      const chunks = generateChunks(512, 100);
+      
+      // 2 consumers
+      setStatus('Running branching: 2 consumers...');
+      
+      const newBranch = await bench('New broadcast(2)', () => newStreamBroadcast2(Stream, chunks));
+      const webBranch = await bench('Web tee()', () => webStreamTee2(chunks));
+      
+      log(`2 Consumers: New ${newBranch.ops.toFixed(1)} vs Web ${webBranch.ops.toFixed(1)} ops/s`);
+      addResult('Branching', '2 Consumers', newBranch.ops, webBranch.ops);
+    }
+    
+    // ========================================
+    // Sync pipeline benchmarks
+    // ========================================
+    
+    async function runSyncBenchmarks() {
+      log('\n=== SYNC PIPELINE BENCHMARKS ===\n');
+      
+      const chunks = generateTextChunks(256, 100); // Valid UTF-8 for text transforms
+      
+      setStatus('Running sync vs async pipeline...');
+      
+      // Sync pipeline with transform
+      const syncResult = benchSync('Sync pullSync()', () => newStreamSyncPipeline(Stream, chunks));
+      
+      // Async pipeline with same transform
+      const asyncResult = await bench('Async pull()', () => newStreamAsyncPipeline(Stream, chunks));
+      
+      log(`Sync pullSync():  ${syncResult.ops.toFixed(1)} ops/s`);
+      log(`Async pull():     ${asyncResult.ops.toFixed(1)} ops/s`);
+      
+      // For sync vs async, show sync as "new" since it's the better option when applicable
+      addResult('Sync Pipeline', '1 Transform (sync vs async)', syncResult.ops, asyncResult.ops);
+    }
+    
+    // ========================================
+    // Run all benchmarks
+    // ========================================
+    
+    async function runAllBenchmarks() {
+      allResults.length = 0;
+      resultsBody.innerHTML = '';
+      output.textContent = '';
+      summary.textContent = 'Running benchmarks...';
+      
+      log('Starting all benchmarks...\n');
+      log('Each benchmark runs multiple iterations for stable measurements.');
+      log('This may take a minute or two.\n');
+      
+      try {
+        await runThroughputBenchmarks();
+        await runTransformBenchmarks();
+        await runConsumptionBenchmarks();
+        await runBranchingBenchmarks();
+        await runSyncBenchmarks();
+        
+        setStatus('All benchmarks complete!', 'complete');
+        log('\n=== ALL BENCHMARKS COMPLETE ===');
+        
+        updateSummary();
+        
+      } catch (err) {
+        log(`\nError: ${err.message}`);
+        console.error(err);
+        setStatus(`Error: ${err.message}`, 'running');
+      }
+    }
+    
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      await runAllBenchmarks();
+      runBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

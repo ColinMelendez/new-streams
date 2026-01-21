@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transform Chain Benchmark</title>
+  <style id="styles"></style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Benchmarks</a>
+      <a href="01-throughput.html">Prev: Throughput</a>
+      <a href="03-consumption.html">Next: Consumption</a>
+    </nav>
+    
+    <h1>Transform Chain Benchmark</h1>
+    <p class="subtitle">Compare transform pipeline performance with multiple chained transforms</p>
+    
+    <div>
+      <button id="runBtn">Run Benchmark</button>
+    </div>
+    
+    <div id="status" class="status" style="display: none;"></div>
+    
+    <h2>Results</h2>
+    <table class="results-table" id="resultsTable">
+      <thead>
+        <tr>
+          <th>Test</th>
+          <th>New Streams (ops/s)</th>
+          <th>Web Streams (ops/s)</th>
+          <th>Comparison</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Click "Run Benchmark" to start</td></tr>
+      </tbody>
+    </table>
+    
+    <h2>Raw Output</h2>
+    <pre id="output" class="output"></pre>
+    
+    <div class="info" style="margin-top: 2rem; background: var(--code-bg); border-radius: 8px; padding: 1rem 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+      <strong style="color: var(--text);">Note:</strong> These benchmarks compare a pure JavaScript/TypeScript implementation of the new Streams API against the browser's fully optimized native C++ implementation of Web Streams. Results should be interpreted with this context in mind - competitive performance from a JS implementation is a positive signal, and a native implementation of the new API would likely perform significantly better.
+    </div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    import { bench, benchmarkStyles, generateChunks } from './bench-utils.js';
+    
+    // Apply styles
+    document.getElementById('styles').textContent = benchmarkStyles;
+    
+    const output = document.getElementById('output');
+    const status = document.getElementById('status');
+    const resultsBody = document.getElementById('resultsBody');
+    const runBtn = document.getElementById('runBtn');
+    
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+    
+    // Generate valid UTF-8 text chunks for text transforms
+    function generateTextChunks(chunkSize, numChunks) {
+      const chunks = [];
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ';
+      for (let i = 0; i < numChunks; i++) {
+        let text = '';
+        for (let j = 0; j < chunkSize; j++) {
+          text += chars[Math.floor(Math.random() * chars.length)];
+        }
+        chunks.push(enc.encode(text));
+      }
+      return chunks;
+    }
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+      output.scrollTop = output.scrollHeight;
+    }
+    
+    function setStatus(msg, type = 'running') {
+      status.style.display = 'block';
+      status.className = `status ${type}`;
+      status.textContent = msg;
+    }
+    
+    function addResult(name, newOps, webOps) {
+      const row = document.createElement('tr');
+      const ratio = newOps / webOps;
+      const comparison = ratio > 1 
+        ? `<span style="color: var(--success)">${ratio.toFixed(2)}x faster</span>`
+        : `<span style="color: var(--warning)">${(1/ratio).toFixed(2)}x slower</span>`;
+      
+      row.innerHTML = `
+        <td>${name}</td>
+        <td>${newOps.toFixed(1)}</td>
+        <td>${webOps.toFixed(1)}</td>
+        <td>${comparison}</td>
+      `;
+      resultsBody.appendChild(row);
+    }
+    
+    // ========================================
+    // Transform functions
+    // ========================================
+    
+    // New Streams transform: uppercase
+    function newUppercase() {
+      return function* (chunks) {
+        if (chunks === null) return;
+        for (const chunk of chunks) {
+          yield enc.encode(dec.decode(chunk).toUpperCase());
+        }
+      };
+    }
+    
+    // New Streams transform: add prefix
+    function newAddPrefix(prefix) {
+      return function* (chunks) {
+        if (chunks === null) return;
+        for (const chunk of chunks) {
+          yield enc.encode(prefix + dec.decode(chunk));
+        }
+      };
+    }
+    
+    // New Streams transform: reverse bytes
+    function newReverse() {
+      return function* (chunks) {
+        if (chunks === null) return;
+        for (const chunk of chunks) {
+          const reversed = new Uint8Array(chunk.length);
+          for (let i = 0; i < chunk.length; i++) {
+            reversed[i] = chunk[chunk.length - 1 - i];
+          }
+          yield reversed;
+        }
+      };
+    }
+    
+    // Web Streams TransformStream: uppercase
+    function webUppercase() {
+      return new TransformStream({
+        transform(chunk, controller) {
+          controller.enqueue(enc.encode(dec.decode(chunk).toUpperCase()));
+        }
+      });
+    }
+    
+    // Web Streams TransformStream: add prefix
+    function webAddPrefix(prefix) {
+      return new TransformStream({
+        transform(chunk, controller) {
+          controller.enqueue(enc.encode(prefix + dec.decode(chunk)));
+        }
+      });
+    }
+    
+    // Web Streams TransformStream: reverse bytes
+    function webReverse() {
+      return new TransformStream({
+        transform(chunk, controller) {
+          const reversed = new Uint8Array(chunk.length);
+          for (let i = 0; i < chunk.length; i++) {
+            reversed[i] = chunk[chunk.length - 1 - i];
+          }
+          controller.enqueue(reversed);
+        }
+      });
+    }
+    
+    // ========================================
+    // New Streams benchmarks
+    // ========================================
+    
+    async function newStreamSingleTransform(chunks) {
+      const readable = Stream.pull(
+        Stream.from(chunks),
+        newUppercase()
+      );
+      return await Stream.bytes(readable);
+    }
+    
+    async function newStreamTripleTransform(chunks) {
+      const readable = Stream.pull(
+        Stream.from(chunks),
+        newUppercase(),
+        newAddPrefix('>>'),
+        newReverse()
+      );
+      return await Stream.bytes(readable);
+    }
+    
+    async function newStreamFiveTransform(chunks) {
+      const readable = Stream.pull(
+        Stream.from(chunks),
+        newUppercase(),
+        newAddPrefix('A'),
+        newReverse(),
+        newAddPrefix('B'),
+        newUppercase()
+      );
+      return await Stream.bytes(readable);
+    }
+    
+    // ========================================
+    // Web Streams benchmarks
+    // ========================================
+    
+    async function webStreamSingleTransform(chunks) {
+      let readable = new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        }
+      });
+      
+      readable = readable.pipeThrough(webUppercase());
+      
+      const reader = readable.getReader();
+      const result = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      
+      const totalLen = result.reduce((sum, arr) => sum + arr.length, 0);
+      const bytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const arr of result) {
+        bytes.set(arr, offset);
+        offset += arr.length;
+      }
+      return bytes;
+    }
+    
+    async function webStreamTripleTransform(chunks) {
+      let readable = new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        }
+      });
+      
+      readable = readable
+        .pipeThrough(webUppercase())
+        .pipeThrough(webAddPrefix('>>'))
+        .pipeThrough(webReverse());
+      
+      const reader = readable.getReader();
+      const result = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      
+      const totalLen = result.reduce((sum, arr) => sum + arr.length, 0);
+      const bytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const arr of result) {
+        bytes.set(arr, offset);
+        offset += arr.length;
+      }
+      return bytes;
+    }
+    
+    async function webStreamFiveTransform(chunks) {
+      let readable = new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        }
+      });
+      
+      readable = readable
+        .pipeThrough(webUppercase())
+        .pipeThrough(webAddPrefix('A'))
+        .pipeThrough(webReverse())
+        .pipeThrough(webAddPrefix('B'))
+        .pipeThrough(webUppercase());
+      
+      const reader = readable.getReader();
+      const result = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      
+      const totalLen = result.reduce((sum, arr) => sum + arr.length, 0);
+      const bytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const arr of result) {
+        bytes.set(arr, offset);
+        offset += arr.length;
+      }
+      return bytes;
+    }
+    
+    // ========================================
+    // Run benchmarks
+    // ========================================
+    
+    async function runBenchmark() {
+      resultsBody.innerHTML = '';
+      output.textContent = '';
+      
+      const chunks = generateTextChunks(256, 100); // 25KB total (valid UTF-8)
+      
+      log('=== Transform Chain Benchmarks ===\n');
+      log('Data: 100 chunks x 256 bytes = 25KB\n');
+      
+      // Single transform
+      setStatus('Running single transform...');
+      const newSingle = await bench('New (1 transform)', () => newStreamSingleTransform(chunks));
+      log(`New Streams (1 transform):  ${newSingle.ops.toFixed(1)} ops/s`);
+      
+      const webSingle = await bench('Web (1 transform)', () => webStreamSingleTransform(chunks));
+      log(`Web Streams (1 transform):  ${webSingle.ops.toFixed(1)} ops/s`);
+      
+      addResult('1 Transform', newSingle.ops, webSingle.ops);
+      
+      // Triple transform
+      setStatus('Running triple transform...');
+      const newTriple = await bench('New (3 transforms)', () => newStreamTripleTransform(chunks));
+      log(`\nNew Streams (3 transforms): ${newTriple.ops.toFixed(1)} ops/s`);
+      
+      const webTriple = await bench('Web (3 transforms)', () => webStreamTripleTransform(chunks));
+      log(`Web Streams (3 transforms): ${webTriple.ops.toFixed(1)} ops/s`);
+      
+      addResult('3 Transforms', newTriple.ops, webTriple.ops);
+      
+      // Five transforms
+      setStatus('Running five transforms...');
+      const newFive = await bench('New (5 transforms)', () => newStreamFiveTransform(chunks));
+      log(`\nNew Streams (5 transforms): ${newFive.ops.toFixed(1)} ops/s`);
+      
+      const webFive = await bench('Web (5 transforms)', () => webStreamFiveTransform(chunks));
+      log(`Web Streams (5 transforms): ${webFive.ops.toFixed(1)} ops/s`);
+      
+      addResult('5 Transforms', newFive.ops, webFive.ops);
+      
+      setStatus('Benchmark complete!', 'complete');
+      log('\n=== Benchmark complete! ===');
+    }
+    
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      
+      try {
+        await runBenchmark();
+      } catch (err) {
+        log(`Error: ${err.message}`);
+        console.error(err);
+        setStatus(`Error: ${err.message}`, 'running');
+      }
+      
+      runBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>03 - Transforms</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --code-bg: #0d1b2a;
+      --success: #4ecca3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    .subtitle { color: var(--text-muted); margin-bottom: 2rem; }
+    a { color: var(--accent); }
+    .output {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      min-height: 400px;
+      overflow: auto;
+    }
+    .section { color: var(--accent); font-weight: bold; }
+    .success { color: var(--success); }
+    .error { color: #ff6b6b; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { margin-right: 1rem; }
+    .run-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .run-btn:hover { opacity: 0.9; }
+    .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Home</a>
+      <a href="02-consumption.html">Prev: Consumption</a>
+      <a href="04-push-streams.html">Next: Push Streams</a>
+    </nav>
+    
+    <h1>03 - Transforms</h1>
+    <p class="subtitle">Transform data with functions, generators, and stateful transforms</p>
+    
+    <button id="runBtn" class="run-btn">Run Again</button>
+    <div id="output" class="output">Running examples...</div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    
+    const output = document.getElementById('output');
+    output.textContent = '';
+    
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+    }
+    
+    function section(title) {
+      log(`\n<span class="section">═══ ${title} ═══</span>\n`);
+    }
+    
+    function success(msg) {
+      log(`<span class="success">✓ ${msg}</span>`);
+    }
+    
+    function render() {
+      output.innerHTML = output.textContent;
+    }
+    
+    // Reusable uppercase transform
+    function uppercaseTransform() {
+      return function* (chunks) {
+        if (chunks === null) {
+          // Flush - return any final output
+          return enc.encode(dec.decode());
+        }
+        for (const chunk of chunks) {
+          const text = dec.decode(chunk, { stream: true });
+          yield enc.encode(text.toUpperCase());
+        }
+      };
+    }
+    
+    async function main() {
+      try {
+        // ============================================================
+        // Stateless transforms - simple function transforms
+        // ============================================================
+        section('Stateless transforms');
+        
+        // Basic transform - uppercase text
+        {
+          const output = Stream.pull(
+            Stream.from(['hello ', 'world']),
+            uppercaseTransform()
+          );
+          
+          const result = await Stream.text(output);
+          log(`Uppercase transform: "${result}"`);
+          success('Basic transform works');
+        }
+        
+        // Transform receives null on flush
+        {
+          let flushCalled = false;
+          
+          const withFlush = (chunks) => {
+            if (chunks === null) {
+              flushCalled = true;
+              return [enc.encode(' [FLUSHED]')];
+            }
+            return chunks;
+          };
+          
+          const output = Stream.pull(Stream.from('data'), withFlush);
+          const result = await Stream.text(output);
+          
+          log(`Flush called: ${flushCalled}`);
+          log(`Result with flush: "${result}"`);
+          success('Flush signal works');
+        }
+        
+        // Return null/empty to filter chunks
+        {
+          const filter = (chunks) => {
+            if (chunks === null) return null;
+            return chunks.filter(chunk => {
+              const text = dec.decode(chunk);
+              return !text.includes('skip');
+            });
+          };
+          
+          const output = Stream.pull(
+            Stream.from(['keep1 ', 'skip this ', 'keep2']),
+            filter
+          );
+          
+          const result = await Stream.text(output);
+          log(`Filtered result: "${result}"`);
+          success('Filtering works');
+        }
+        
+        // ============================================================
+        // Generator transforms - 1:N mapping
+        // ============================================================
+        section('Generator transforms - 1:N mapping');
+        
+        // Sync generator - split into lines
+        {
+          const splitLines = function* (chunks) {
+            if (chunks === null) return;
+            for (const chunk of chunks) {
+              const text = dec.decode(chunk);
+              for (const line of text.split('\n')) {
+                if (line) {
+                  yield enc.encode(`> ${line}\n`);
+                }
+              }
+            }
+          };
+          
+          const output = Stream.pull(
+            Stream.from('line1\nline2\nline3'),
+            splitLines
+          );
+          
+          const result = await Stream.text(output);
+          log(`Split lines:\n${result}`);
+          success('Generator transform works');
+        }
+        
+        // Expand: duplicate each chunk
+        {
+          const duplicate = function* (chunks) {
+            if (chunks === null) return;
+            for (const chunk of chunks) {
+              yield chunk;
+              yield chunk;
+            }
+          };
+          
+          const output = Stream.pull(
+            Stream.from(['A', 'B', 'C']),
+            duplicate
+          );
+          
+          const result = await Stream.text(output);
+          log(`Duplicated: "${result}"`);
+          success('Expansion works');
+        }
+        
+        // ============================================================
+        // Chained transforms
+        // ============================================================
+        section('Chained transforms');
+        
+        {
+          // Transform 1: Add brackets
+          const addBrackets = function* (chunks) {
+            if (chunks === null) return;
+            for (const chunk of chunks) {
+              yield enc.encode(`[${dec.decode(chunk)}]`);
+            }
+          };
+          
+          // Chain: source -> uppercase -> brackets
+          const output = Stream.pull(
+            Stream.from(['hello', ' ', 'world']),
+            uppercaseTransform(),
+            addBrackets
+          );
+          
+          const result = await Stream.text(output);
+          log(`Chained transforms: "${result}"`);
+          success('Transform chaining works');
+        }
+        
+        // ============================================================
+        // Async transforms
+        // ============================================================
+        section('Async transforms');
+        
+        {
+          // Async transform with delay
+          const delayedUppercase = async function* (chunks) {
+            if (chunks === null) return;
+            for (const chunk of chunks) {
+              await new Promise(r => setTimeout(r, 10));
+              yield enc.encode(dec.decode(chunk).toUpperCase());
+            }
+          };
+          
+          const output = Stream.pull(
+            Stream.from(['async ', 'transform']),
+            delayedUppercase
+          );
+          
+          const result = await Stream.text(output);
+          log(`Async transform: "${result}"`);
+          success('Async transforms work');
+        }
+        
+        // ============================================================
+        // Stateful transforms
+        // ============================================================
+        section('Stateful transforms');
+        
+        {
+          // Line numbering transform (maintains state)
+          function lineNumberTransform() {
+            let lineNum = 1;
+            return function* (chunks) {
+              if (chunks === null) return;
+              for (const chunk of chunks) {
+                const text = dec.decode(chunk);
+                for (const line of text.split('\n')) {
+                  if (line) {
+                    yield enc.encode(`${lineNum++}: ${line}\n`);
+                  }
+                }
+              }
+            };
+          }
+          
+          const output = Stream.pull(
+            Stream.from('first\nsecond\nthird'),
+            lineNumberTransform()
+          );
+          
+          const result = await Stream.text(output);
+          log(`Numbered lines:\n${result}`);
+          success('Stateful transforms work');
+        }
+        
+        // ============================================================
+        section('All examples completed successfully!');
+        
+      } catch (err) {
+        log(`\n<span class="error">Error: ${err.message}</span>`);
+        console.error(err);
+      }
+      
+      render();
+    }
+    
+    main();
+    
+    document.getElementById('runBtn').addEventListener('click', () => {
+      output.textContent = 'Running examples...\n';
+      main();
+    });
+  </script>
+</body>
+</html>

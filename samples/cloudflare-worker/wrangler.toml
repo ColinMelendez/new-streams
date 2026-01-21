@@ -1,0 +1,29 @@
+# Cloudflare Worker Configuration
+# See: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "stream-comparison-worker"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Build settings - using esbuild bundler
+[build]
+command = ""
+
+# Environment-specific settings
+[env.production]
+# Add production-specific settings here if needed
+# e.g., routes, custom domains, etc.
+
+# Observability - enable logging
+[observability]
+enabled = true
+
+# Limits for the worker
+[limits]
+cpu_ms = 50000  # 50 second CPU limit for processing large streams

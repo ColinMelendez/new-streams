@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Branching / Tee Benchmark</title>
+  <style id="styles"></style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Benchmarks</a>
+      <a href="03-consumption.html">Prev: Consumption</a>
+      <a href="05-sync-pipeline.html">Next: Sync Pipeline</a>
+    </nav>
+    
+    <h1>Branching / Tee Benchmark</h1>
+    <p class="subtitle">Compare multi-consumer patterns: tee() vs broadcast()/share()</p>
+    
+    <div>
+      <button id="runBtn">Run Benchmark</button>
+    </div>
+    
+    <div id="status" class="status" style="display: none;"></div>
+    
+    <h2>Results</h2>
+    <table class="results-table" id="resultsTable">
+      <thead>
+        <tr>
+          <th>Test</th>
+          <th>New Streams (ops/s)</th>
+          <th>Web Streams (ops/s)</th>
+          <th>Comparison</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Click "Run Benchmark" to start</td></tr>
+      </tbody>
+    </table>
+    
+    <h2>Raw Output</h2>
+    <pre id="output" class="output"></pre>
+    
+    <div class="info" style="margin-top: 2rem; background: var(--code-bg); border-radius: 8px; padding: 1rem 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+      <strong style="color: var(--text);">Note:</strong> These benchmarks compare a pure JavaScript/TypeScript implementation of the new Streams API against the browser's fully optimized native C++ implementation of Web Streams. Results should be interpreted with this context in mind - competitive performance from a JS implementation is a positive signal, and a native implementation of the new API would likely perform significantly better.
+    </div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    import { bench, benchSync, benchmarkStyles, generateChunks } from './bench-utils.js';
+    
+    // Apply styles
+    document.getElementById('styles').textContent = benchmarkStyles;
+    
+    const output = document.getElementById('output');
+    const status = document.getElementById('status');
+    const resultsBody = document.getElementById('resultsBody');
+    const runBtn = document.getElementById('runBtn');
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+      output.scrollTop = output.scrollHeight;
+    }
+    
+    function setStatus(msg, type = 'running') {
+      status.style.display = 'block';
+      status.className = `status ${type}`;
+      status.textContent = msg;
+    }
+    
+    function addResult(name, newOps, webOps) {
+      const row = document.createElement('tr');
+      const ratio = newOps / webOps;
+      const comparison = ratio > 1 
+        ? `<span style="color: var(--success)">${ratio.toFixed(2)}x faster</span>`
+        : `<span style="color: var(--warning)">${(1/ratio).toFixed(2)}x slower</span>`;
+      
+      row.innerHTML = `
+        <td>${name}</td>
+        <td>${newOps.toFixed(1)}</td>
+        <td>${webOps.toFixed(1)}</td>
+        <td>${comparison}</td>
+      `;
+      resultsBody.appendChild(row);
+    }
+    
+    // ========================================
+    // New Streams benchmarks (broadcast)
+    // ========================================
+    
+    async function newStreamBroadcast2(chunks) {
+      const { writer, broadcast } = Stream.broadcast({ highWaterMark: 1000 });
+      
+      // Create 2 consumers
+      const consumer1 = broadcast.push();
+      const consumer2 = broadcast.push();
+      
+      // Write all chunks
+      (async () => {
+        for (const chunk of chunks) {
+          await writer.write(chunk);
+        }
+        await writer.end();
+      })();
+      
+      // Consume both - use array() to avoid concat overhead
+      const [arr1, arr2] = await Promise.all([
+        Stream.array(consumer1),
+        Stream.array(consumer2)
+      ]);
+      
+      return arr1.length + arr2.length;
+    }
+    
+    async function newStreamBroadcast4(chunks) {
+      const { writer, broadcast } = Stream.broadcast({ highWaterMark: 1000 });
+      
+      // Create 4 consumers
+      const consumers = [
+        broadcast.push(),
+        broadcast.push(),
+        broadcast.push(),
+        broadcast.push()
+      ];
+      
+      // Write all chunks
+      (async () => {
+        for (const chunk of chunks) {
+          await writer.write(chunk);
+        }
+        await writer.end();
+      })();
+      
+      // Consume all - use array() to avoid concat overhead
+      const results = await Promise.all(consumers.map(c => Stream.array(c)));
+      return results.reduce((sum, r) => sum + r.length, 0);
+    }
+    
+    async function newStreamShare2(chunks) {
+      async function* source() {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      }
+      
+      const shared = Stream.share(source(), { highWaterMark: 1000 });
+      
+      const consumer1 = shared.pull();
+      const consumer2 = shared.pull();
+      
+      // Use array() to avoid concat overhead
+      const [arr1, arr2] = await Promise.all([
+        Stream.array(consumer1),
+        Stream.array(consumer2)
+      ]);
+      
+      return arr1.length + arr2.length;
+    }
+    
+    // Sync version of share - uses sync source and sync consumers
+    function newStreamShareSync2(chunks) {
+      function* source() {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      }
+      
+      const shared = Stream.shareSync(source(), { highWaterMark: 1000 });
+      
+      const consumer1 = shared.pull();
+      const consumer2 = shared.pull();
+      
+      // Collect sync - both consumers iterate in lockstep
+      const results1 = [];
+      const results2 = [];
+      
+      const iter1 = consumer1[Symbol.iterator]();
+      const iter2 = consumer2[Symbol.iterator]();
+      
+      while (true) {
+        const r1 = iter1.next();
+        const r2 = iter2.next();
+        
+        if (r1.done && r2.done) break;
+        
+        if (!r1.done) {
+          for (const chunk of r1.value) {
+            results1.push(chunk);
+          }
+        }
+        if (!r2.done) {
+          for (const chunk of r2.value) {
+            results2.push(chunk);
+          }
+        }
+      }
+      
+      const len1 = results1.reduce((sum, c) => sum + c.length, 0);
+      const len2 = results2.reduce((sum, c) => sum + c.length, 0);
+      return len1 + len2;
+    }
+    
+    // ========================================
+    // Web Streams benchmarks (tee)
+    // ========================================
+    
+    function createWebReadable(chunks) {
+      return new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        }
+      });
+    }
+    
+    // Just collect chunks without concatenation to match Stream.array() behavior
+    async function collectWebStream(readable) {
+      const reader = readable.getReader();
+      const result = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      return result;
+    }
+    
+    async function webStreamTee2(chunks) {
+      const readable = createWebReadable(chunks);
+      const [branch1, branch2] = readable.tee();
+      
+      const [arr1, arr2] = await Promise.all([
+        collectWebStream(branch1),
+        collectWebStream(branch2)
+      ]);
+      
+      return arr1.length + arr2.length;
+    }
+    
+    async function webStreamTee4(chunks) {
+      const readable = createWebReadable(chunks);
+      
+      // tee() only creates 2 branches, so we need to tee twice
+      const [a, b] = readable.tee();
+      const [branch1, branch2] = a.tee();
+      const [branch3, branch4] = b.tee();
+      
+      const results = await Promise.all([
+        collectWebStream(branch1),
+        collectWebStream(branch2),
+        collectWebStream(branch3),
+        collectWebStream(branch4)
+      ]);
+      
+      // Return chunk count (not byte count)
+      return results.reduce((sum, r) => sum + r.length, 0);
+    }
+    
+    // ========================================
+    // Run benchmarks
+    // ========================================
+    
+    async function runBenchmark() {
+      resultsBody.innerHTML = '';
+      output.textContent = '';
+      
+      const chunks = generateChunks(512, 100); // 50KB total
+      
+      log('=== Branching / Tee Benchmarks ===\n');
+      log('Data: 100 chunks x 512 bytes = 50KB\n');
+      
+      // 2 consumers
+      setStatus('Running 2-consumer benchmark...');
+      
+      const newBroadcast2 = await bench('New broadcast (2)', () => newStreamBroadcast2(chunks));
+      log(`New Streams broadcast(2): ${newBroadcast2.ops.toFixed(1)} ops/s`);
+      
+      const webTee2 = await bench('Web tee (2)', () => webStreamTee2(chunks));
+      log(`Web Streams tee(2):       ${webTee2.ops.toFixed(1)} ops/s`);
+      
+      addResult('2 Consumers (broadcast vs tee)', newBroadcast2.ops, webTee2.ops);
+      
+      // Share (pull-based multi-consumer) - async
+      setStatus('Running share benchmark...');
+      
+      const newShare2 = await bench('New share (2)', () => newStreamShare2(chunks));
+      log(`\nNew Streams share(2):     ${newShare2.ops.toFixed(1)} ops/s`);
+      
+      // Compare share to tee
+      addResult('2 Consumers (share vs tee)', newShare2.ops, webTee2.ops);
+      
+      // ShareSync (sync pull-based multi-consumer)
+      setStatus('Running shareSync benchmark...');
+      
+      const newShareSync2 = benchSync('New shareSync (2)', () => newStreamShareSync2(chunks));
+      log(`New Streams shareSync(2): ${newShareSync2.ops.toFixed(1)} ops/s`);
+      
+      // Compare shareSync to tee
+      addResult('2 Consumers (shareSync vs tee)', newShareSync2.ops, webTee2.ops);
+      
+      // 4 consumers
+      setStatus('Running 4-consumer benchmark...');
+      
+      const newBroadcast4 = await bench('New broadcast (4)', () => newStreamBroadcast4(chunks));
+      log(`\nNew Streams broadcast(4): ${newBroadcast4.ops.toFixed(1)} ops/s`);
+      
+      const webTee4 = await bench('Web tee (4)', () => webStreamTee4(chunks));
+      log(`Web Streams tee(4):       ${webTee4.ops.toFixed(1)} ops/s`);
+      
+      addResult('4 Consumers (broadcast vs 2x tee)', newBroadcast4.ops, webTee4.ops);
+      
+      setStatus('Benchmark complete!', 'complete');
+      log('\n=== Benchmark complete! ===');
+      log('\nNote: Web Streams tee() only supports 2 branches per call,');
+      log('so 4 consumers requires chaining multiple tee() calls.');
+    }
+    
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      
+      try {
+        await runBenchmark();
+      } catch (err) {
+        log(`Error: ${err.message}`);
+        console.error(err);
+        setStatus(`Error: ${err.message}`, 'running');
+      }
+      
+      runBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

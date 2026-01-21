@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>06 - Branching</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --code-bg: #0d1b2a;
+      --success: #4ecca3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    .subtitle { color: var(--text-muted); margin-bottom: 2rem; }
+    a { color: var(--accent); }
+    .output {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      min-height: 400px;
+      overflow: auto;
+    }
+    .section { color: var(--accent); font-weight: bold; }
+    .success { color: var(--success); }
+    .error { color: #ff6b6b; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { margin-right: 1rem; }
+    .run-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .run-btn:hover { opacity: 0.9; }
+    .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Home</a>
+      <a href="05-piping.html">Prev: Piping</a>
+      <a href="07-cancellation.html">Next: Cancellation</a>
+    </nav>
+    
+    <h1>06 - Branching</h1>
+    <p class="subtitle">Multi-consumer patterns with broadcast() and share()</p>
+    
+    <button id="runBtn" class="run-btn">Run Again</button>
+    <div id="output" class="output">Running examples...</div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    
+    const output = document.getElementById('output');
+    output.textContent = '';
+    
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+    }
+    
+    function section(title) {
+      log(`\n<span class="section">═══ ${title} ═══</span>\n`);
+    }
+    
+    function success(msg) {
+      log(`<span class="success">✓ ${msg}</span>`);
+    }
+    
+    function render() {
+      output.innerHTML = output.textContent;
+    }
+    
+    // Uppercase transform - each call creates fresh encoder/decoder
+    function uppercaseTransform() {
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      return function* (chunks) {
+        if (chunks === null) {
+          // Flush any remaining decoder state
+          const remaining = decoder.decode();
+          if (remaining) yield encoder.encode(remaining.toUpperCase());
+          return;
+        }
+        for (const chunk of chunks) {
+          yield encoder.encode(decoder.decode(chunk, { stream: true }).toUpperCase());
+        }
+      };
+    }
+    
+    async function main() {
+      try {
+        // ============================================================
+        // Stream.broadcast() - Push-model multi-consumer
+        // ============================================================
+        section('Stream.broadcast() - Push-model branching');
+        
+        // Basic broadcast - multiple consumers see same data
+        {
+          const { writer, broadcast } = Stream.broadcast({ highWaterMark: 100 });
+          
+          // Create multiple consumers
+          const consumer1 = broadcast.push();
+          const consumer2 = broadcast.push();
+          
+          // Write data - both consumers will see it
+          (async () => {
+            await writer.write('shared data');
+            await writer.end();
+          })();
+          
+          // Both consumers see the same content
+          const [result1, result2] = await Promise.all([
+            Stream.text(consumer1),
+            Stream.text(consumer2)
+          ]);
+          
+          log(`Consumer 1: "${result1}"`);
+          log(`Consumer 2: "${result2}"`);
+          success('Basic broadcast works');
+        }
+        
+        // Multiple consumers with different transforms
+        {
+          const { writer, broadcast } = Stream.broadcast({ highWaterMark: 100 });
+          
+          // Consumer without transform
+          const raw = broadcast.push();
+          
+          // Consumer with transform
+          const transformed = broadcast.push(uppercaseTransform());
+          
+          (async () => {
+            await writer.write('Hello World');
+            await writer.end();
+          })();
+          
+          const [rawResult, transformedResult] = await Promise.all([
+            Stream.text(raw),
+            Stream.text(transformed)
+          ]);
+          
+          log(`\nRaw consumer: "${rawResult}"`);
+          log(`Transformed: "${transformedResult}"`);
+          success('Broadcast with transforms works');
+        }
+        
+        // ============================================================
+        // Stream.share() - Pull-model multi-consumer
+        // ============================================================
+        section('Stream.share() - Pull-model branching');
+        
+        // Share a source among multiple consumers
+        {
+          // Create a source that we want to share
+          // Note: Stream.share expects Uint8Array[] batches, so wrap with Stream.from()
+          const source = Stream.from(['chunk 1', 'chunk 2', 'chunk 3']);
+          
+          // Create a shared source
+          const shared = Stream.share(source, { highWaterMark: 100 });
+          
+          // Create multiple pull consumers
+          const consumer1 = shared.pull();
+          const consumer2 = shared.pull();
+          
+          // Both consumers see the same data
+          const [result1, result2] = await Promise.all([
+            Stream.text(consumer1),
+            Stream.text(consumer2)
+          ]);
+          
+          log(`Consumer 1: "${result1}"`);
+          log(`Consumer 2: "${result2}"`);
+          success('Basic share works');
+        }
+        
+        // Share with transforms per consumer
+        {
+          // Note: Stream.share expects Uint8Array[] batches, so wrap with Stream.from()
+          const source = Stream.from(['shared ', 'content']);
+          
+          const shared = Stream.share(source, { highWaterMark: 100 });
+          
+          // Different transforms for each consumer
+          const raw = shared.pull();
+          const upper = shared.pull(uppercaseTransform());
+          
+          const [rawResult, upperResult] = await Promise.all([
+            Stream.text(raw),
+            Stream.text(upper)
+          ]);
+          
+          log(`\nRaw: "${rawResult}"`);
+          log(`Uppercase: "${upperResult}"`);
+          success('Share with transforms works');
+        }
+        
+        // ============================================================
+        // Dynamic consumers
+        // ============================================================
+        section('Dynamic consumers');
+        
+        {
+          const { writer, broadcast } = Stream.broadcast({ highWaterMark: 100 });
+          
+          // Start writing
+          const writePromise = (async () => {
+            await writer.write('msg1 ');
+            await new Promise(r => setTimeout(r, 10));
+            await writer.write('msg2 ');
+            await new Promise(r => setTimeout(r, 10));
+            await writer.write('msg3');
+            await writer.end();
+          })();
+          
+          // Early consumer - sees everything
+          const early = broadcast.push();
+          
+          // Wait a bit, then add late consumer
+          await new Promise(r => setTimeout(r, 15));
+          const late = broadcast.push();
+          
+          await writePromise;
+          
+          const [earlyResult, lateResult] = await Promise.all([
+            Stream.text(early),
+            Stream.text(late)
+          ]);
+          
+          log(`Early consumer: "${earlyResult}"`);
+          log(`Late consumer: "${lateResult}"`);
+          log('(Late consumer may see fewer messages)');
+          success('Dynamic consumers work');
+        }
+        
+        // ============================================================
+        // Fan-out pattern
+        // ============================================================
+        section('Fan-out pattern');
+        
+        {
+          const { writer, broadcast } = Stream.broadcast({ highWaterMark: 100 });
+          
+          // Create a transform factory that adds a prefix to each chunk
+          function addPrefix(prefix) {
+            return function* (chunks) {
+              if (chunks === null) return;
+              for (const chunk of chunks) {
+                yield enc.encode(`[${prefix}] ${dec.decode(chunk)}`);
+              }
+            };
+          }
+          
+          const logProcessor = broadcast.push(addPrefix('LOG'));
+          const alertProcessor = broadcast.push(addPrefix('ALERT'));
+          const archiveProcessor = broadcast.push(addPrefix('ARCHIVE'));
+          
+          (async () => {
+            await writer.write('system event');
+            await writer.end();
+          })();
+          
+          const [logResult, alertResult, archiveResult] = await Promise.all([
+            Stream.text(logProcessor),
+            Stream.text(alertProcessor),
+            Stream.text(archiveProcessor)
+          ]);
+          
+          log(`Log: "${logResult}"`);
+          log(`Alert: "${alertResult}"`);
+          log(`Archive: "${archiveResult}"`);
+          success('Fan-out pattern works');
+        }
+        
+        // ============================================================
+        // shareSync() - Synchronous sharing
+        // ============================================================
+        section('shareSync() - Synchronous sharing');
+        
+        {
+          // Note: Stream.shareSync expects Uint8Array[] batches, so wrap with Stream.fromSync()
+          const source = Stream.fromSync(['sync ', 'shared ', 'data']);
+          
+          const shared = Stream.shareSync(source, { highWaterMark: 100 });
+          
+          const consumer1 = shared.pull();
+          const consumer2 = shared.pull();
+          
+          const [result1, result2] = await Promise.all([
+            Stream.text(consumer1),
+            Stream.text(consumer2)
+          ]);
+          
+          log(`Sync consumer 1: "${result1}"`);
+          log(`Sync consumer 2: "${result2}"`);
+          success('shareSync works');
+        }
+        
+        // ============================================================
+        section('All examples completed successfully!');
+        
+      } catch (err) {
+        log(`\n<span class="error">Error: ${err.message}</span>`);
+        console.error(err);
+      }
+      
+      render();
+    }
+    
+    main();
+    
+    document.getElementById('runBtn').addEventListener('click', () => {
+      output.textContent = 'Running examples...\n';
+      main();
+    });
+  </script>
+</body>
+</html>

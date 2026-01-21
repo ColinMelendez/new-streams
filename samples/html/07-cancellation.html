@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>07 - Cancellation</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --code-bg: #0d1b2a;
+      --success: #4ecca3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    .subtitle { color: var(--text-muted); margin-bottom: 2rem; }
+    a { color: var(--accent); }
+    .output {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      min-height: 400px;
+      overflow: auto;
+    }
+    .section { color: var(--accent); font-weight: bold; }
+    .success { color: var(--success); }
+    .error { color: #ff6b6b; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { margin-right: 1rem; }
+    .run-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .run-btn:hover { opacity: 0.9; }
+    .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Home</a>
+      <a href="06-branching.html">Prev: Branching</a>
+    </nav>
+    
+    <h1>07 - Cancellation</h1>
+    <p class="subtitle">Cancel streams with AbortSignal and handle cleanup</p>
+    
+    <button id="runBtn" class="run-btn">Run Again</button>
+    <div id="output" class="output">Running examples...</div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    
+    const output = document.getElementById('output');
+    output.textContent = '';
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+    }
+    
+    function section(title) {
+      log(`\n<span class="section">═══ ${title} ═══</span>\n`);
+    }
+    
+    function success(msg) {
+      log(`<span class="success">✓ ${msg}</span>`);
+    }
+    
+    function render() {
+      output.innerHTML = output.textContent;
+    }
+    
+    async function main() {
+      try {
+        // ============================================================
+        // AbortSignal with consumer functions
+        // ============================================================
+        section('AbortSignal with consumers');
+        
+        // Timeout using AbortSignal.timeout()
+        {
+          const { writer, readable } = Stream.push();
+          
+          // Slow producer
+          (async () => {
+            await writer.write('chunk1');
+            await new Promise(r => setTimeout(r, 200));
+            await writer.write('chunk2');
+            await writer.end();
+          })();
+          
+          try {
+            // Try to read with short timeout
+            await Stream.bytes(readable, { signal: AbortSignal.timeout(50) });
+          } catch (err) {
+            log(`Timeout error: ${err.name}`);
+            success('AbortSignal.timeout() works');
+          }
+        }
+        
+        // Manual abort with AbortController
+        {
+          const { writer, readable } = Stream.push();
+          const controller = new AbortController();
+          
+          // Producer
+          (async () => {
+            for (let i = 0; i < 10; i++) {
+              await writer.write(`msg${i} `);
+              await new Promise(r => setTimeout(r, 20));
+            }
+            await writer.end();
+          })();
+          
+          // Abort after 50ms
+          setTimeout(() => {
+            log('Aborting...');
+            controller.abort();
+          }, 50);
+          
+          try {
+            await Stream.bytes(readable, { signal: controller.signal });
+          } catch (err) {
+            log(`Abort error: ${err.name}`);
+            success('AbortController works');
+          }
+        }
+        
+        // ============================================================
+        // AbortSignal with pipeTo
+        // ============================================================
+        section('AbortSignal with pipeTo');
+        
+        {
+          const enc = new TextEncoder();
+          
+          // Simple writer
+          class MemoryWriter {
+            constructor() {
+              this.chunks = [];
+              this._closed = false;
+            }
+            get desiredSize() { return this._closed ? null : 100; }
+            async write(chunk) {
+              const bytes = typeof chunk === 'string' ? enc.encode(chunk) : chunk;
+              this.chunks.push(bytes);
+            }
+            async writev(chunks) {
+              for (const c of chunks) await this.write(c);
+            }
+            async end() { this._closed = true; return 0; }
+            async abort() { this._closed = true; }
+          }
+          
+          const { writer: pushWriter, readable } = Stream.push();
+          const memWriter = new MemoryWriter();
+          const controller = new AbortController();
+          
+          // Slow producer
+          (async () => {
+            for (let i = 0; i < 10; i++) {
+              await pushWriter.write(`chunk${i} `);
+              await new Promise(r => setTimeout(r, 20));
+            }
+            await pushWriter.end();
+          })();
+          
+          // Abort after a while
+          setTimeout(() => controller.abort(), 60);
+          
+          try {
+            await Stream.pipeTo(readable, memWriter, { 
+              signal: controller.signal 
+            });
+          } catch (err) {
+            log(`pipeTo aborted: ${err.name}`);
+            log(`Chunks written before abort: ${memWriter.chunks.length}`);
+            success('pipeTo cancellation works');
+          }
+        }
+        
+        // ============================================================
+        // Cancellation in async iteration
+        // ============================================================
+        section('Cancellation in async iteration');
+        
+        {
+          const { writer, readable } = Stream.push();
+          const controller = new AbortController();
+          
+          // Producer
+          (async () => {
+            for (let i = 0; i < 20; i++) {
+              try {
+                await writer.write(`item${i}`);
+                await new Promise(r => setTimeout(r, 15));
+              } catch {
+                break;
+              }
+            }
+            try { await writer.end(); } catch {}
+          })();
+          
+          // Consumer with abort
+          let received = 0;
+          const dec = new TextDecoder();
+          
+          // Abort after 50ms
+          setTimeout(() => controller.abort(), 50);
+          
+          try {
+            for await (const batch of readable) {
+              if (controller.signal.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+              }
+              for (const chunk of batch) {
+                received++;
+                log(`Received: ${dec.decode(chunk)}`);
+              }
+            }
+          } catch (err) {
+            log(`Iteration stopped: ${err.name}`);
+          }
+          
+          log(`Total received: ${received}`);
+          success('Iteration cancellation works');
+        }
+        
+        // ============================================================
+        // Cleanup with generators
+        // ============================================================
+        section('Cleanup in generators');
+        
+        {
+          let cleanupRan = false;
+          
+          async function* sourceWithCleanup() {
+            try {
+              for (let i = 0; i < 100; i++) {
+                yield `value${i}`;
+                await new Promise(r => setTimeout(r, 10));
+              }
+            } finally {
+              log('Generator cleanup ran');
+              cleanupRan = true;
+            }
+          }
+          
+          const readable = Stream.pull(sourceWithCleanup());
+          const controller = new AbortController();
+          
+          // Abort after 35ms
+          setTimeout(() => controller.abort(), 35);
+          
+          try {
+            await Stream.text(readable, { signal: controller.signal });
+          } catch (err) {
+            log(`Caught: ${err.name}`);
+          }
+          
+          // Give cleanup time to run
+          await new Promise(r => setTimeout(r, 10));
+          
+          log(`Cleanup ran: ${cleanupRan}`);
+          success('Generator cleanup works');
+        }
+        
+        // ============================================================
+        // Abort reason propagation
+        // ============================================================
+        section('Abort reason propagation');
+        
+        {
+          const { writer, readable } = Stream.push();
+          const controller = new AbortController();
+          
+          // Slow producer - keeps writing so we have time to abort
+          (async () => {
+            for (let i = 0; i < 10; i++) {
+              try {
+                await writer.write(`data${i} `);
+                await new Promise(r => setTimeout(r, 30));
+              } catch {
+                break;
+              }
+            }
+            try { await writer.end(); } catch {}
+          })();
+          
+          // Abort with custom reason after a short delay
+          setTimeout(() => {
+            controller.abort(new Error('Custom abort reason'));
+          }, 50);
+          
+          try {
+            await Stream.bytes(readable, { signal: controller.signal });
+          } catch (err) {
+            log(`Error type: ${err.constructor.name}`);
+            log(`Error message: ${err.message}`);
+            
+            // Check if reason is available
+            if (controller.signal.reason) {
+              log(`Signal reason: ${controller.signal.reason.message}`);
+            }
+            success('Abort reason propagation works');
+          }
+        }
+        
+        // ============================================================
+        // Combining signals (any abort triggers)
+        // ============================================================
+        section('Combining abort signals');
+        
+        {
+          const { writer, readable } = Stream.push();
+          
+          // Two different abort conditions
+          const timeout = AbortSignal.timeout(100);
+          const manual = new AbortController();
+          
+          // Combine signals (abort when ANY signal fires)
+          const combined = AbortSignal.any([timeout, manual.signal]);
+          
+          (async () => {
+            for (let i = 0; i < 10; i++) {
+              await writer.write(`chunk${i} `);
+              await new Promise(r => setTimeout(r, 30));
+            }
+            await writer.end();
+          })();
+          
+          // Manual abort fires first
+          setTimeout(() => manual.abort(), 40);
+          
+          try {
+            await Stream.bytes(readable, { signal: combined });
+          } catch (err) {
+            log(`Combined signal triggered: ${err.name}`);
+            success('Combined signals work');
+          }
+        }
+        
+        // ============================================================
+        section('All examples completed successfully!');
+        
+      } catch (err) {
+        log(`\n<span class="error">Error: ${err.message}</span>`);
+        console.error(err);
+      }
+      
+      render();
+    }
+    
+    main();
+    
+    document.getElementById('runBtn').addEventListener('click', () => {
+      output.textContent = 'Running examples...\n';
+      main();
+    });
+  </script>
+</body>
+</html>

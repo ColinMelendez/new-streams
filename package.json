@@ -1,0 +1,33 @@
+{
+  "name": "new-streams",
+  "version": "0.1.0",
+  "description": "Prototype implementation of a redesigned Web Streams API",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "test:watch": "node --import tsx --test --watch src/**/*.test.ts",
+    "benchmark": "npx tsx benchmarks/run-all.ts",
+    "benchmark:deno": "deno run --allow-read --allow-env --allow-run benchmarks/run-all.ts",
+    "benchmark:bun": "bun run benchmarks/run-all.ts",
+    "html-samples": "node samples/html/server.mjs",
+    "slides": "slidev SLIDES.md"
+  },
+  "devDependencies": {
+    "@slidev/cli": "^52.11.5",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "streams",
+    "async",
+    "bytes"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "experimental-fast-webstreams": "^0.0.18"
+  }
+}

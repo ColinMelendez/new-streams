@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stream API Benchmarks</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --code-bg: #0d1b2a;
+      --success: #4ecca3;
+      --warning: #ffc107;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    .subtitle { color: var(--text-muted); margin-bottom: 2rem; }
+    a { color: var(--accent); }
+    
+    .benchmarks {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .benchmark-card {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      text-decoration: none;
+      color: var(--text);
+      border: 1px solid var(--primary);
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .benchmark-card:hover {
+      border-color: var(--accent);
+      transform: translateX(4px);
+    }
+    .benchmark-card h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.1rem;
+      color: var(--accent);
+    }
+    .benchmark-card p {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    
+    .info {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      margin-top: 2rem;
+      font-size: 0.9rem;
+    }
+    .info code {
+      background: var(--primary);
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+    }
+    
+    .nav { margin-bottom: 1rem; }
+    .nav a { margin-right: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="/samples/html/">Samples</a>
+    </nav>
+    
+    <h1>Stream API Benchmarks</h1>
+    <p class="subtitle">Compare performance of the new Streams API vs Web Streams</p>
+    
+    <div class="benchmarks">
+      <a href="01-throughput.html" class="benchmark-card">
+        <h2>01 - Throughput</h2>
+        <p>Measure raw data throughput: creating streams, writing, and reading bytes</p>
+      </a>
+      
+      <a href="02-transforms.html" class="benchmark-card">
+        <h2>02 - Transform Chains</h2>
+        <p>Compare transform pipeline performance with multiple chained transforms</p>
+      </a>
+      
+      <a href="03-consumption.html" class="benchmark-card">
+        <h2>03 - Consumption Methods</h2>
+        <p>Compare bytes(), text(), async iteration consumption patterns</p>
+      </a>
+      
+      <a href="04-branching.html" class="benchmark-card">
+        <h2>04 - Branching / Tee</h2>
+        <p>Compare multi-consumer patterns: tee() vs broadcast()/share()</p>
+      </a>
+      
+      <a href="05-sync-pipeline.html" class="benchmark-card">
+        <h2>05 - Sync Pipeline</h2>
+        <p>Compare sync vs async pipelines (pullSync vs pull) - zero async overhead</p>
+      </a>
+      
+      <a href="all.html" class="benchmark-card">
+        <h2>Run All Benchmarks</h2>
+        <p>Run all benchmarks sequentially and display combined results</p>
+      </a>
+    </div>
+    
+    <div class="info">
+      <p><strong>About these benchmarks:</strong></p>
+      <p>Each benchmark runs multiple iterations to get stable measurements. Results show operations per second (higher is better) and relative performance comparison.</p>
+      <p><strong>Note:</strong> Browser JIT warmup can affect initial results. Each benchmark includes warmup iterations.</p>
+      <p><strong>Important:</strong> These benchmarks compare a pure JavaScript/TypeScript implementation of the new Streams API against the browser's fully optimized native implementation of Web Streams. The Web Streams API is implemented in C++ and has been heavily optimized over years of development. Results should be interpreted with this context in mind - competitive performance from a JS implementation is a positive signal, and a native implementation of the new API would likely perform significantly better.</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync Pipeline Benchmark</title>
+  <style id="styles"></style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Benchmarks</a>
+      <a href="04-branching.html">Prev: Branching</a>
+    </nav>
+    
+    <h1>Sync Pipeline Benchmark</h1>
+    <p class="subtitle">Compare synchronous pipeline processing (no async overhead)</p>
+    
+    <div>
+      <button id="runBtn">Run Benchmark</button>
+    </div>
+    
+    <div id="status" class="status" style="display: none;"></div>
+    
+    <h2>Results</h2>
+    <table class="results-table" id="resultsTable">
+      <thead>
+        <tr>
+          <th>Test</th>
+          <th>New Streams Sync (ops/s)</th>
+          <th>New Streams Async (ops/s)</th>
+          <th>Sync vs Async</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Click "Run Benchmark" to start</td></tr>
+      </tbody>
+    </table>
+    
+    <h2>Raw Output</h2>
+    <pre id="output" class="output"></pre>
+    
+    <div class="info" style="margin-top: 2rem; background: var(--code-bg); border-radius: 8px; padding: 1rem 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+      <strong style="color: var(--text);">Note:</strong> This benchmark compares sync vs async pipelines within the new Streams API. Sync pipelines avoid async/await overhead entirely, making them ideal for in-memory data processing.
+    </div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    import { bench, benchSync, benchmarkStyles, generateChunks } from './bench-utils.js';
+    
+    // Apply styles
+    document.getElementById('styles').textContent = benchmarkStyles;
+    
+    const output = document.getElementById('output');
+    const status = document.getElementById('status');
+    const resultsBody = document.getElementById('resultsBody');
+    const runBtn = document.getElementById('runBtn');
+    
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+    
+    // Generate valid UTF-8 text chunks for text transforms
+    function generateTextChunks(chunkSize, numChunks) {
+      const chunks = [];
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ';
+      for (let i = 0; i < numChunks; i++) {
+        let text = '';
+        for (let j = 0; j < chunkSize; j++) {
+          text += chars[Math.floor(Math.random() * chars.length)];
+        }
+        chunks.push(enc.encode(text));
+      }
+      return chunks;
+    }
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+      output.scrollTop = output.scrollHeight;
+    }
+    
+    function setStatus(msg, type = 'running') {
+      status.style.display = 'block';
+      status.className = `status ${type}`;
+      status.textContent = msg;
+    }
+    
+    function addResult(name, syncOps, asyncOps) {
+      const row = document.createElement('tr');
+      const ratio = syncOps / asyncOps;
+      const comparison = `<span style="color: var(--success)">${ratio.toFixed(2)}x faster</span>`;
+      
+      row.innerHTML = `
+        <td>${name}</td>
+        <td>${syncOps.toFixed(1)}</td>
+        <td>${asyncOps.toFixed(1)}</td>
+        <td>${comparison}</td>
+      `;
+      resultsBody.appendChild(row);
+    }
+    
+    // Helper to collect sync pipeline output
+    function collectSync(source) {
+      const result = [];
+      for (const batch of source) {
+        for (const chunk of batch) {
+          result.push(chunk);
+        }
+      }
+      // Concatenate all chunks
+      const totalLen = result.reduce((sum, arr) => sum + arr.length, 0);
+      const bytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const arr of result) {
+        bytes.set(arr, offset);
+        offset += arr.length;
+      }
+      return bytes;
+    }
+    
+    // ========================================
+    // Sync transforms
+    // ========================================
+    
+    function syncUppercase() {
+      return function* (chunks) {
+        if (chunks === null) return;
+        for (const chunk of chunks) {
+          yield enc.encode(dec.decode(chunk).toUpperCase());
+        }
+      };
+    }
+    
+    function syncAddPrefix(prefix) {
+      return function (chunks) {
+        if (chunks === null) return null;
+        return chunks.map(chunk => enc.encode(prefix + dec.decode(chunk)));
+      };
+    }
+    
+    function syncReverse() {
+      return function (chunks) {
+        if (chunks === null) return null;
+        return chunks.map(chunk => {
+          const reversed = new Uint8Array(chunk.length);
+          for (let i = 0; i < chunk.length; i++) {
+            reversed[i] = chunk[chunk.length - 1 - i];
+          }
+          return reversed;
+        });
+      };
+    }
+    
+    // ========================================
+    // Sync pipeline benchmarks
+    // ========================================
+    
+    function syncPipelineNoTransform(chunks) {
+      const source = Stream.fromSync(chunks);
+      const pipeline = Stream.pullSync(source);
+      return collectSync(pipeline);
+    }
+    
+    function syncPipelineSingleTransform(chunks) {
+      const source = Stream.fromSync(chunks);
+      const pipeline = Stream.pullSync(source, syncUppercase());
+      return collectSync(pipeline);
+    }
+    
+    function syncPipelineTripleTransform(chunks) {
+      const source = Stream.fromSync(chunks);
+      const pipeline = Stream.pullSync(
+        source,
+        syncUppercase(),
+        syncAddPrefix('>>'),
+        syncReverse()
+      );
+      return collectSync(pipeline);
+    }
+    
+    // ========================================
+    // Async pipeline benchmarks (for comparison)
+    // ========================================
+    
+    async function asyncPipelineNoTransform(chunks) {
+      const source = Stream.from(chunks);
+      return await Stream.bytes(source);
+    }
+    
+    async function asyncPipelineSingleTransform(chunks) {
+      const source = Stream.pull(Stream.from(chunks), syncUppercase());
+      return await Stream.bytes(source);
+    }
+    
+    async function asyncPipelineTripleTransform(chunks) {
+      const source = Stream.pull(
+        Stream.from(chunks),
+        syncUppercase(),
+        syncAddPrefix('>>'),
+        syncReverse()
+      );
+      return await Stream.bytes(source);
+    }
+    
+    // ========================================
+    // Sync consumer benchmarks
+    // ========================================
+    
+    function syncBytesConsumer(chunks) {
+      const source = Stream.fromSync(chunks);
+      const pipeline = Stream.pullSync(source);
+      return Stream.bytesSync(pipeline);
+    }
+    
+    function syncTextConsumer(chunks) {
+      const source = Stream.fromSync(chunks);
+      const pipeline = Stream.pullSync(source);
+      return Stream.textSync(pipeline);
+    }
+    
+    // ========================================
+    // Run benchmarks
+    // ========================================
+    
+    async function runBenchmark() {
+      resultsBody.innerHTML = '';
+      output.textContent = '';
+      
+      const chunks = generateTextChunks(256, 100); // 25KB total (valid UTF-8)
+      
+      log('=== Sync Pipeline Benchmarks ===\n');
+      log('Data: 100 chunks x 256 bytes = 25KB\n');
+      log('Comparing sync (pullSync) vs async (pull) pipelines.\n');
+      log('Sync pipelines have zero async overhead - pure synchronous iteration.\n');
+      
+      // No transform - baseline
+      setStatus('Running no-transform benchmark...');
+      
+      const syncNoTx = benchSync('Sync (no transform)', () => syncPipelineNoTransform(chunks));
+      log(`Sync (no transform):   ${syncNoTx.ops.toFixed(1)} ops/s`);
+      
+      const asyncNoTx = await bench('Async (no transform)', () => asyncPipelineNoTransform(chunks));
+      log(`Async (no transform):  ${asyncNoTx.ops.toFixed(1)} ops/s`);
+      
+      addResult('No Transform', syncNoTx.ops, asyncNoTx.ops);
+      
+      // Single transform
+      setStatus('Running single-transform benchmark...');
+      
+      const syncSingle = benchSync('Sync (1 transform)', () => syncPipelineSingleTransform(chunks));
+      log(`\nSync (1 transform):    ${syncSingle.ops.toFixed(1)} ops/s`);
+      
+      const asyncSingle = await bench('Async (1 transform)', () => asyncPipelineSingleTransform(chunks));
+      log(`Async (1 transform):   ${asyncSingle.ops.toFixed(1)} ops/s`);
+      
+      addResult('1 Transform', syncSingle.ops, asyncSingle.ops);
+      
+      // Triple transform
+      setStatus('Running triple-transform benchmark...');
+      
+      const syncTriple = benchSync('Sync (3 transforms)', () => syncPipelineTripleTransform(chunks));
+      log(`\nSync (3 transforms):   ${syncTriple.ops.toFixed(1)} ops/s`);
+      
+      const asyncTriple = await bench('Async (3 transforms)', () => asyncPipelineTripleTransform(chunks));
+      log(`Async (3 transforms):  ${asyncTriple.ops.toFixed(1)} ops/s`);
+      
+      addResult('3 Transforms', syncTriple.ops, asyncTriple.ops);
+      
+      // Sync consumers
+      setStatus('Running sync consumer benchmarks...');
+      
+      const syncBytes = benchSync('Sync bytesSync()', () => syncBytesConsumer(chunks));
+      log(`\nSync bytesSync():      ${syncBytes.ops.toFixed(1)} ops/s`);
+      
+      const asyncBytes = await bench('Async bytes()', () => asyncPipelineNoTransform(chunks));
+      log(`Async bytes():         ${asyncBytes.ops.toFixed(1)} ops/s`);
+      
+      addResult('bytesSync() vs bytes()', syncBytes.ops, asyncBytes.ops);
+      
+      const syncText = benchSync('Sync textSync()', () => syncTextConsumer(chunks));
+      log(`\nSync textSync():       ${syncText.ops.toFixed(1)} ops/s`);
+      
+      const asyncText = await bench('Async text()', async () => await Stream.text(Stream.from(chunks)));
+      log(`Async text():          ${asyncText.ops.toFixed(1)} ops/s`);
+      
+      addResult('textSync() vs text()', syncText.ops, asyncText.ops);
+      
+      setStatus('Benchmark complete!', 'complete');
+      log('\n=== Benchmark complete! ===');
+      log('\nNote: Sync pipelines are ideal when data is already in memory');
+      log('and you want to avoid async/await overhead.');
+    }
+    
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      
+      try {
+        await runBenchmark();
+      } catch (err) {
+        log(`Error: ${err.message}`);
+        console.error(err);
+        setStatus(`Error: ${err.message}`, 'running');
+      }
+      
+      runBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

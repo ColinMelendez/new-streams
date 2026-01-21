@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>02 - Consuming Streams</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --code-bg: #0d1b2a;
+      --success: #4ecca3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    .subtitle { color: var(--text-muted); margin-bottom: 2rem; }
+    a { color: var(--accent); }
+    .output {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      min-height: 400px;
+      overflow: auto;
+    }
+    .section { color: var(--accent); font-weight: bold; }
+    .success { color: var(--success); }
+    .error { color: #ff6b6b; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { margin-right: 1rem; }
+    .run-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .run-btn:hover { opacity: 0.9; }
+    .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Home</a>
+      <a href="01-basic-creation.html">Prev: Creation</a>
+      <a href="03-transforms.html">Next: Transforms</a>
+    </nav>
+    
+    <h1>02 - Consuming Streams</h1>
+    <p class="subtitle">Reading data with bytes(), text(), arrayBuffer(), and async iteration</p>
+    
+    <button id="runBtn" class="run-btn">Run Again</button>
+    <div id="output" class="output">Running examples...</div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    
+    const output = document.getElementById('output');
+    output.textContent = '';
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+    }
+    
+    function section(title) {
+      log(`\n<span class="section">═══ ${title} ═══</span>\n`);
+    }
+    
+    function success(msg) {
+      log(`<span class="success">✓ ${msg}</span>`);
+    }
+    
+    function render() {
+      output.innerHTML = output.textContent;
+    }
+    
+    async function main() {
+      try {
+        // ============================================================
+        // Stream.bytes() - Get all bytes as Uint8Array
+        // ============================================================
+        section('Stream.bytes() - Get all bytes');
+        
+        {
+          const bytes = await Stream.bytes(Stream.from('Hello, bytes!'));
+          log(`Type: ${bytes.constructor.name}`);
+          log(`Length: ${bytes.length}`);
+          log(`First 5 bytes: [${Array.from(bytes.slice(0, 5)).join(', ')}]`);
+          success('bytes() works');
+        }
+        
+        // With limit to prevent memory exhaustion
+        {
+          const readable = Stream.from('This is a long string that exceeds our limit');
+          try {
+            await Stream.bytes(readable, { limit: 10 });
+          } catch (e) {
+            log(`bytes() limit exceeded: ${e.message}`);
+            success('Limit protection works');
+          }
+        }
+        
+        // ============================================================
+        // Stream.arrayBuffer() - Get as ArrayBuffer
+        // ============================================================
+        section('Stream.arrayBuffer() - Get as ArrayBuffer');
+        
+        {
+          const buffer = await Stream.arrayBuffer(Stream.from('Hello, ArrayBuffer!'));
+          log(`Type: ${buffer.constructor.name}`);
+          log(`Byte length: ${buffer.byteLength}`);
+          success('arrayBuffer() works');
+        }
+        
+        // ============================================================
+        // Stream.text() - Get as decoded string
+        // ============================================================
+        section('Stream.text() - Get as string');
+        
+        // Default UTF-8 decoding
+        {
+          const text = await Stream.text(Stream.from('Hello, text!'));
+          log(`Decoded text: "${text}"`);
+          success('text() works');
+        }
+        
+        // Explicit encoding
+        {
+          // Create UTF-16LE encoded data
+          const utf16bytes = new Uint8Array([0x48, 0x00, 0x69, 0x00]); // "Hi" in UTF-16LE
+          const text = await Stream.text(Stream.from(utf16bytes), { encoding: 'utf-16le' });
+          log(`UTF-16LE decoded: "${text}"`);
+          success('Custom encoding works');
+        }
+        
+        // ============================================================
+        // Async Iteration - for await...of
+        // ============================================================
+        section('Async Iteration - for await...of');
+        
+        {
+          const readable = Stream.from(['chunk1', 'chunk2', 'chunk3']);
+          const decoder = new TextDecoder();
+          const results = [];
+          
+          // Each iteration yields a batch of Uint8Array chunks
+          for await (const batch of readable) {
+            for (const chunk of batch) {
+              results.push(decoder.decode(chunk, { stream: true }));
+            }
+          }
+          results.push(decoder.decode()); // Flush decoder
+          
+          log(`Chunks received: ${results.length - 1}`);
+          log(`Content: ${results.join('')}`);
+          success('Async iteration works');
+        }
+        
+        // ============================================================
+        // Stream.array() - Collect chunks as array
+        // ============================================================
+        section('Stream.array() - Collect chunks');
+        
+        {
+          const chunks = await Stream.array(Stream.from(['a', 'b', 'c']));
+          log(`Number of chunks: ${chunks.length}`);
+          log(`Chunk types: ${chunks.map(c => c.constructor.name).join(', ')}`);
+          success('array() works');
+        }
+        
+        // ============================================================
+        // Sync consumption with bytesSync(), textSync()
+        // ============================================================
+        section('Sync consumption - bytesSync(), textSync()');
+        
+        {
+          const source = Stream.fromSync(['sync', ' ', 'data']);
+          const pipeline = Stream.pullSync(source);
+          const text = Stream.textSync(pipeline);
+          log(`Sync text: "${text}"`);
+          success('Sync consumption works');
+        }
+        
+        // ============================================================
+        section('All examples completed successfully!');
+        
+      } catch (err) {
+        log(`\n<span class="error">Error: ${err.message}</span>`);
+        console.error(err);
+      }
+      
+      render();
+    }
+    
+    main();
+    
+    document.getElementById('runBtn').addEventListener('click', () => {
+      output.textContent = 'Running examples...\n';
+      main();
+    });
+  </script>
+</body>
+</html>

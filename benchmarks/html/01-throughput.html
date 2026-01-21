@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Throughput Benchmark</title>
+  <style id="styles"></style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav">
+      <a href="index.html">Benchmarks</a>
+      <a href="02-transforms.html">Next: Transforms</a>
+    </nav>
+    
+    <h1>Throughput Benchmark</h1>
+    <p class="subtitle">Measure raw data throughput: creating streams, writing, and reading bytes</p>
+    
+    <div>
+      <button id="runBtn">Run Benchmark</button>
+      <button id="runAllBtn">Run All Sizes</button>
+    </div>
+    
+    <div id="status" class="status" style="display: none;"></div>
+    
+    <h2>Results</h2>
+    <table class="results-table" id="resultsTable">
+      <thead>
+        <tr>
+          <th>Test</th>
+          <th>New Streams (ops/s)</th>
+          <th>Web Streams (ops/s)</th>
+          <th>Comparison</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Click "Run Benchmark" to start</td></tr>
+      </tbody>
+    </table>
+    
+    <h2>Raw Output</h2>
+    <pre id="output" class="output"></pre>
+    
+    <div class="info" style="margin-top: 2rem; background: var(--code-bg); border-radius: 8px; padding: 1rem 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+      <strong style="color: var(--text);">Note:</strong> These benchmarks compare a pure JavaScript/TypeScript implementation of the new Streams API against the browser's fully optimized native C++ implementation of Web Streams. Results should be interpreted with this context in mind - competitive performance from a JS implementation is a positive signal, and a native implementation of the new API would likely perform significantly better.
+    </div>
+  </div>
+
+  <script type="module">
+    import { Stream } from '/dist/index.js';
+    import { bench, benchmarkStyles, generateChunks } from './bench-utils.js';
+    
+    // Apply styles
+    document.getElementById('styles').textContent = benchmarkStyles;
+    
+    const output = document.getElementById('output');
+    const status = document.getElementById('status');
+    const resultsBody = document.getElementById('resultsBody');
+    const runBtn = document.getElementById('runBtn');
+    const runAllBtn = document.getElementById('runAllBtn');
+    
+    function log(msg) {
+      output.textContent += msg + '\n';
+      output.scrollTop = output.scrollHeight;
+    }
+    
+    function setStatus(msg, type = 'running') {
+      status.style.display = 'block';
+      status.className = `status ${type}`;
+      status.textContent = msg;
+    }
+    
+    function addResult(name, newOps, webOps) {
+      const row = document.createElement('tr');
+      const ratio = newOps / webOps;
+      const comparison = ratio > 1 
+        ? `<span style="color: var(--success)">${ratio.toFixed(2)}x faster</span>`
+        : `<span style="color: var(--warning)">${(1/ratio).toFixed(2)}x slower</span>`;
+      
+      row.innerHTML = `
+        <td>${name}</td>
+        <td>${newOps.toFixed(1)}</td>
+        <td>${webOps.toFixed(1)}</td>
+        <td>${comparison}</td>
+      `;
+      resultsBody.appendChild(row);
+    }
+    
+    // ========================================
+    // New Streams API benchmarks
+    // ========================================
+    
+    async function newStreamThroughput(chunks) {
+      const { writer, readable } = Stream.push();
+      
+      // Write all chunks
+      (async () => {
+        for (const chunk of chunks) {
+          await writer.write(chunk);
+        }
+        await writer.end();
+      })();
+      
+      // Read all bytes
+      const bytes = await Stream.bytes(readable);
+      return bytes.length;
+    }
+    
+    async function newStreamFromArray(chunks) {
+      const readable = Stream.from(chunks);
+      const bytes = await Stream.bytes(readable);
+      return bytes.length;
+    }
+    
+    async function newStreamPull(chunks) {
+      async function* source() {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      }
+      const readable = Stream.pull(source());
+      const bytes = await Stream.bytes(readable);
+      return bytes.length;
+    }
+    
+    // ========================================
+    // Web Streams API benchmarks
+    // ========================================
+    
+    async function webStreamThroughput(chunks) {
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      
+      // Write all chunks
+      (async () => {
+        for (const chunk of chunks) {
+          await writer.write(chunk);
+        }
+        await writer.close();
+      })();
+      
+      // Read all bytes
+      const reader = readable.getReader();
+      const result = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      
+      // Concatenate
+      const totalLen = result.reduce((sum, arr) => sum + arr.length, 0);
+      const bytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const arr of result) {
+        bytes.set(arr, offset);
+        offset += arr.length;
+      }
+      return bytes.length;
+    }
+    
+    async function webStreamFromArray(chunks) {
+      const readable = new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        }
+      });
+      
+      const reader = readable.getReader();
+      const result = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      
+      const totalLen = result.reduce((sum, arr) => sum + arr.length, 0);
+      const bytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const arr of result) {
+        bytes.set(arr, offset);
+        offset += arr.length;
+      }
+      return bytes.length;
+    }
+    
+    async function webStreamPull(chunks) {
+      let index = 0;
+      const readable = new ReadableStream({
+        pull(controller) {
+          if (index < chunks.length) {
+            controller.enqueue(chunks[index++]);
+          } else {
+            controller.close();
+          }
+        }
+      });
+      
+      const reader = readable.getReader();
+      const result = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        result.push(value);
+      }
+      
+      const totalLen = result.reduce((sum, arr) => sum + arr.length, 0);
+      const bytes = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const arr of result) {
+        bytes.set(arr, offset);
+        offset += arr.length;
+      }
+      return bytes.length;
+    }
+    
+    // ========================================
+    // Run benchmarks
+    // ========================================
+    
+    async function runBenchmark(chunkSize = 1024, numChunks = 100) {
+      const chunks = generateChunks(chunkSize, numChunks);
+      const totalSize = chunkSize * numChunks;
+      const sizeLabel = totalSize >= 1024 * 1024 
+        ? `${(totalSize / 1024 / 1024).toFixed(1)}MB` 
+        : `${(totalSize / 1024).toFixed(0)}KB`;
+      
+      log(`\n=== Throughput: ${sizeLabel} (${numChunks} x ${chunkSize} bytes) ===\n`);
+      
+      // Push/Write throughput
+      setStatus(`Running push throughput (${sizeLabel})...`);
+      const newPush = await bench('New Streams (push)', () => newStreamThroughput(chunks));
+      log(`New Streams (push):  ${newPush.ops.toFixed(1)} ops/s (${newPush.ms.toFixed(3)} ms/op)`);
+      
+      const webPush = await bench('Web Streams (push)', () => webStreamThroughput(chunks));
+      log(`Web Streams (push):  ${webPush.ops.toFixed(1)} ops/s (${webPush.ms.toFixed(3)} ms/op)`);
+      
+      addResult(`Push ${sizeLabel}`, newPush.ops, webPush.ops);
+      
+      // From array
+      setStatus(`Running from-array (${sizeLabel})...`);
+      const newFrom = await bench('New Streams (from)', () => newStreamFromArray(chunks));
+      log(`New Streams (from):  ${newFrom.ops.toFixed(1)} ops/s (${newFrom.ms.toFixed(3)} ms/op)`);
+      
+      const webFrom = await bench('Web Streams (from)', () => webStreamFromArray(chunks));
+      log(`Web Streams (from):  ${webFrom.ops.toFixed(1)} ops/s (${webFrom.ms.toFixed(3)} ms/op)`);
+      
+      addResult(`From Array ${sizeLabel}`, newFrom.ops, webFrom.ops);
+      
+      // Pull-based
+      setStatus(`Running pull-based (${sizeLabel})...`);
+      const newPull = await bench('New Streams (pull)', () => newStreamPull(chunks));
+      log(`New Streams (pull):  ${newPull.ops.toFixed(1)} ops/s (${newPull.ms.toFixed(3)} ms/op)`);
+      
+      const webPull = await bench('Web Streams (pull)', () => webStreamPull(chunks));
+      log(`Web Streams (pull):  ${webPull.ops.toFixed(1)} ops/s (${webPull.ms.toFixed(3)} ms/op)`);
+      
+      addResult(`Pull ${sizeLabel}`, newPull.ops, webPull.ops);
+    }
+    
+    async function runAllSizes() {
+      resultsBody.innerHTML = '';
+      output.textContent = '';
+      
+      const sizes = [
+        [256, 10],      // 2.5KB
+        [1024, 100],    // 100KB
+        [4096, 250],    // 1MB
+        [16384, 64],    // 1MB (larger chunks)
+      ];
+      
+      for (const [chunkSize, numChunks] of sizes) {
+        await runBenchmark(chunkSize, numChunks);
+      }
+      
+      setStatus('All benchmarks complete!', 'complete');
+      log('\n=== All benchmarks complete! ===');
+    }
+    
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      runAllBtn.disabled = true;
+      resultsBody.innerHTML = '';
+      output.textContent = '';
+      
+      try {
+        await runBenchmark(1024, 100);
+        setStatus('Benchmark complete!', 'complete');
+      } catch (err) {
+        log(`Error: ${err.message}`);
+        setStatus(`Error: ${err.message}`, 'running');
+      }
+      
+      runBtn.disabled = false;
+      runAllBtn.disabled = false;
+    });
+    
+    runAllBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      runAllBtn.disabled = true;
+      
+      try {
+        await runAllSizes();
+      } catch (err) {
+        log(`Error: ${err.message}`);
+        setStatus(`Error: ${err.message}`, 'running');
+      }
+      
+      runBtn.disabled = false;
+      runAllBtn.disabled = false;
+    });
+  </script>
+</body>
+</html>

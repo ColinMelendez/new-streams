@@ -1,6 +1,7 @@
 {
   "name": "new-streams",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "author": "James M Snell <jasnell@gmail.com>",
   "description": "Prototype implementation of a redesigned Web Streams API",
   "type": "module",
   "main": "dist/index.js",
@@ -29,5 +30,9 @@
   "license": "MIT",
   "dependencies": {
     "experimental-fast-webstreams": "^0.0.18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jasnell/new-streams.git"
   }
 }

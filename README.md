@@ -167,6 +167,7 @@ A complete reference implementation is available in this repository demonstratin
 | [MIGRATION-NODEJS.md](MIGRATION-NODEJS.md) | Guide for migrating from Node.js streams to this API |
 | [DESIGN-TRADEOFFS.md](DESIGN-TRADEOFFS.md) | Discussion of design tradeoffs and rationale |
 | [COMPLETENESS-ANALYSIS.md](COMPLETENESS-ANALYSIS.md) | Analysis of feature completeness |
+| [TRANSFER-INTEGRATION.md](TRANSFER-INTEGRATION.md) | Design discussion: Transfer Protocol integration for ownership semantics |
 
 ### Code
 

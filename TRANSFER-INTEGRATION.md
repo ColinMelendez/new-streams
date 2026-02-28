@@ -4,7 +4,7 @@
 **Date:** February 2026
 **Related:** [Transfer Protocol Proposal](https://github.com/jasnell/proposal-transfer-protocol), [API.md](API.md), [DESIGN.md](DESIGN.md)
 
-This document explores how the [TC-39 Transfer Protocol proposal](https://github.com/jasnell/proposal-transfer-protocol) (`Symbol.transfer` / `Object.transfer()`) applies to the new streams API. The Transfer Protocol offers an ownership primitive that could complement the new streams API's intentional omission of the Web Streams locking model.
+This document explores how a **As-yet no-official-status** [TC-39 Transfer Protocol pre-proposal](https://github.com/jasnell/proposal-transfer-protocol) (`Symbol.transfer` / `Object.transfer()`) could apply to the new streams API. The Transfer Protocol would offer an ownership primitive that could complement the new streams API's intentional omission of the Web Streams locking model.
 
 ---
 
@@ -69,7 +69,7 @@ This is a primitive the new streams API could use. Where Web Streams uses lockin
 
 ### Relationship Between the Proposals
 
-The Transfer Protocol is a general-purpose TC-39 language proposal. The new streams API is a domain-specific streaming primitive. They are independently useful but complementary:
+The Transfer Protocol would be a general-purpose TC-39 language proposal. The new streams API is a domain-specific streaming primitive. They are independently useful but complementary:
 
 - The Transfer Protocol provides the **mechanism** (ownership move with detach)
 - The new streams API provides the **types** that implement it (readables, writers, channels)
@@ -95,7 +95,7 @@ This section identifies which types in the new streams API would implement `[Sym
 | Share instance | Possible | Multi-consumer wrapper owns the source; transfer moves management authority |
 | Broadcast instance | Possible | Less clear value; the writer side is the primary ownership concern |
 | `WriterIterablePair` (from `Stream.push()`) | Possible | Atomic transfer of both writer and readable together |
-| Iterables from `Stream.pull()` / `Stream.from()` | Inherited | These return async generators; transfer depends on `AsyncIterator.prototype[Symbol.transfer]()` from the TC-39 proposal |
+| Iterables from `Stream.pull()` / `Stream.from()` | Inherited | These return async generators; transfer depends on `AsyncIterator.prototype[Symbol.transfer]()` from a possible TC-39 proposal |
 
 ### Why Not Everything?
 
@@ -584,7 +584,7 @@ The Transfer Protocol specifies that `[Symbol.dispose]()` and `[Symbol.asyncDisp
 | **Concurrent safety check** | Per-operation lock check | Per-operation detach check |
 | **Works across realms** | Yes (stream transfer via `postMessage`) | Yes (iterator transfer via `postMessage`, per companion proposal) |
 | **Composability** | Must manage reader lifecycle alongside streams | `Object.transfer()` is a single expression |
-| **Standard scope** | WHATWG Streams spec | TC-39 language standard |
+| **Standard scope** | WHATWG Streams spec | possible TC-39 language standard |
 
 ### What Locking Provides That Transfer Doesn't
 
@@ -683,7 +683,7 @@ const output = buildPipeline(networkStream);
 const data = await Stream.bytes(output);
 ```
 
-Note: This requires `Stream.pull()` to return an iterator that implements `[Symbol.transfer]()`. If `Stream.pull()` returns an async generator, this is inherited from `AsyncIterator.prototype[Symbol.transfer]()` per the TC-39 proposal.
+Note: This requires `Stream.pull()` to return an iterator that implements `[Symbol.transfer]()`. If `Stream.pull()` returns an async generator, this is inherited from `AsyncIterator.prototype[Symbol.transfer]()` per the proposal.
 
 ### 7.3 Duplex Channel Handoff
 

@@ -77,6 +77,14 @@ async function consumeWeb(stream: ReadableStream<Uint8Array>): Promise<number> {
   return total;
 }
 
+async function consumeNew(readable: AsyncIterable<Uint8Array[]>): Promise<number> {
+  let total = 0;
+  for await (const batch of readable) {
+    for (const c of batch) total += c.byteLength;
+  }
+  return total;
+}
+
 function nullWriter(): Writer {
   let total = 0;
   return {
@@ -297,8 +305,8 @@ async function main() {
   // --- Scenario 2: Pull + transform ---
   console.log('Running: Pull + transform...');
   const pullNew = await measureSustained('pull + xor (new)', async () => {
-    const result = await Stream.bytes(Stream.pull(Stream.from(chunks), xor));
-    if (result.byteLength !== totalBytes) throw new Error('Wrong size');
+    const total = await consumeNew(Stream.pull(Stream.from(chunks), xor));
+    if (total !== totalBytes) throw new Error('Wrong size');
   });
 
   const pullWeb = await measureSustained('pull + xor (web)', async () => {
@@ -339,11 +347,11 @@ async function main() {
       await writer.end();
     })();
     const [r1, r2] = await Promise.all([
-      Stream.bytes(c1),
-      Stream.bytes(c2),
+      consumeNew(c1),
+      consumeNew(c2),
       producing,
     ]);
-    if (r1.byteLength !== bcastBytes || r2.byteLength !== bcastBytes) {
+    if (r1 !== bcastBytes || r2 !== bcastBytes) {
       throw new Error('Wrong size');
     }
   });
@@ -358,8 +366,8 @@ async function main() {
   // --- Scenario 5: Large volume pull (full 100MB) ---
   console.log('Running: Large volume pull...');
   const largeNew = await measureSustained('large pull (new)', async () => {
-    const result = await Stream.bytes(Stream.pull(Stream.from(chunks), xor));
-    if (result.byteLength !== totalBytes) throw new Error('Wrong size');
+    const total = await consumeNew(Stream.pull(Stream.from(chunks), xor));
+    if (total !== totalBytes) throw new Error('Wrong size');
   });
 
   const largeWeb = await measureSustained('large pull (web)', async () => {

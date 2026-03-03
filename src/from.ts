@@ -22,6 +22,11 @@ import {
 // Shared TextEncoder instance for string conversion
 const encoder = new TextEncoder();
 
+// Maximum number of chunks to yield per batch from from(Uint8Array[]).
+// Bounds peak memory when arrays flow through transforms, which must
+// allocate output for the entire batch at once.
+const FROM_BATCH_SIZE = 128;
+
 // =============================================================================
 // Type Guards and Detection
 // =============================================================================
@@ -512,8 +517,11 @@ export function from(input: ByteInput | Streamable): ByteStreamReadable {
     };
   }
 
-  // Fast path: Uint8Array[] - yield as a single batch
-  // This is a very common case (array of chunks) and should be fast
+  // Fast path: Uint8Array[] - yield in bounded sub-batches.
+  // Yielding the entire array as one batch forces downstream transforms
+  // to process all data at once, causing peak memory proportional to total
+  // data volume. Sub-batching keeps peak memory bounded while preserving
+  // the throughput benefit of batched processing.
   if (Array.isArray(input)) {
     if (input.length === 0) {
       return {
@@ -530,7 +538,13 @@ export function from(input: ByteInput | Streamable): ByteStreamReadable {
         const batch = input as Uint8Array[];
         return {
           async *[Symbol.asyncIterator]() {
-            yield batch;
+            if (batch.length <= FROM_BATCH_SIZE) {
+              yield batch;
+            } else {
+              for (let i = 0; i < batch.length; i += FROM_BATCH_SIZE) {
+                yield batch.slice(i, i + FROM_BATCH_SIZE);
+              }
+            }
           },
         };
       }

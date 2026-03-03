@@ -74,6 +74,14 @@ async function consumeWeb(stream: ReadableStream<Uint8Array>): Promise<number> {
   return total;
 }
 
+async function consumeNew(readable: AsyncIterable<Uint8Array[]>): Promise<number> {
+  let total = 0;
+  for await (const batch of readable) {
+    for (const c of batch) total += c.byteLength;
+  }
+  return total;
+}
+
 function nullWriter(): Writer {
   let total = 0;
   return {
@@ -170,10 +178,10 @@ boxplot(() => {
   summary(() => {
     bench('pull + transform (new)', function* () {
       yield async () => {
-        const result = await Stream.bytes(
+        const total = await consumeNew(
           Stream.pull(Stream.from(smallChunks), xor),
         );
-        do_not_optimize(result);
+        do_not_optimize(total);
       };
     }).gc('inner');
 
@@ -233,11 +241,11 @@ boxplot(() => {
           await writer.end();
         })();
         const [r1, r2] = await Promise.all([
-          Stream.bytes(c1),
-          Stream.bytes(c2),
+          consumeNew(c1),
+          consumeNew(c2),
           producing,
         ]);
-        do_not_optimize(r1.byteLength + r2.byteLength);
+        do_not_optimize(r1 + r2);
       };
     }).gc('inner');
 
@@ -262,10 +270,10 @@ boxplot(() => {
   summary(() => {
     bench('large pull 40MB (new)', function* () {
       yield async () => {
-        const result = await Stream.bytes(
+        const total = await consumeNew(
           Stream.pull(Stream.from(largeChunks), xor),
         );
-        do_not_optimize(result);
+        do_not_optimize(total);
       };
     }).gc('inner');
 

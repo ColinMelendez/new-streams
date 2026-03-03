@@ -29,6 +29,8 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "effect": "^3.19.19",
+    "effect-v4": "npm:effect@4.0.0-beta.25",
     "experimental-fast-webstreams": "^0.0.18"
   },
   "repository": {

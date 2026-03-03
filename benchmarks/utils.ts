@@ -491,6 +491,114 @@ export function printThreeWayComparison(comparisons: ThreeWayComparison[]): void
   console.log(`Samples per benchmark: ${comparisons[0]?.newStream.iterations || 'N/A'}`);
 }
 
+export interface EffectComparison {
+  scenario: string;
+  newStream: BenchmarkResult;
+  webStream: BenchmarkResult;
+  nodeStream: BenchmarkResult;
+  effectStream: BenchmarkResult;
+  newVsEffect: { speedup: number; confidence: string };
+  webVsEffect: { speedup: number; confidence: string };
+  nodeVsEffect: { speedup: number; confidence: string };
+}
+
+/**
+ * Create an effect comparison object (New, Web, Node vs Effect)
+ */
+export function createEffectComparison(
+  scenario: string,
+  newStream: BenchmarkResult,
+  webStream: BenchmarkResult,
+  nodeStream: BenchmarkResult,
+  effectStream: BenchmarkResult
+): EffectComparison {
+  const computeSpeedup = (a: BenchmarkResult, b: BenchmarkResult) =>
+    a.bytesPerSec && b.bytesPerSec
+      ? a.bytesPerSec / b.bytesPerSec
+      : b.mean / a.mean;
+
+  const newVsEffectSpeedup = computeSpeedup(newStream, effectStream);
+  const webVsEffectSpeedup = computeSpeedup(webStream, effectStream);
+  const nodeVsEffectSpeedup = computeSpeedup(nodeStream, effectStream);
+
+  return {
+    scenario,
+    newStream,
+    webStream,
+    nodeStream,
+    effectStream,
+    newVsEffect: {
+      speedup: newVsEffectSpeedup,
+      confidence: assessSignificance(newStream, effectStream, newVsEffectSpeedup),
+    },
+    webVsEffect: {
+      speedup: webVsEffectSpeedup,
+      confidence: assessSignificance(webStream, effectStream, webVsEffectSpeedup),
+    },
+    nodeVsEffect: {
+      speedup: nodeVsEffectSpeedup,
+      confidence: assessSignificance(nodeStream, effectStream, nodeVsEffectSpeedup),
+    },
+  };
+}
+
+/**
+ * Print effect benchmark comparison table (New, Web, Node vs Effect)
+ */
+export function printEffectComparison(comparisons: EffectComparison[]): void {
+  console.log('\n' + '='.repeat(160));
+  console.log('BENCHMARK RESULTS - Effect/Stream Comparison (higher throughput = better)');
+  console.log('='.repeat(160));
+
+  const headers = ['Scenario', 'New Stream', 'Web Stream', 'Node Stream', 'Effect Stream', 'New/Effect', 'Web/Effect', 'Node/Effect'];
+  const colWidths = [30, 15, 15, 15, 15, 14, 14, 14];
+
+  console.log(headers.map((h, i) => h.padEnd(colWidths[i])).join(' | '));
+  console.log(colWidths.map((w) => '-'.repeat(w)).join('-+-'));
+
+  const formatSpeedup = (speedup: number, confidence: string) => {
+    if (confidence === 'within noise') return '~same';
+    return speedup >= 1
+      ? `${speedup.toFixed(2)}x faster`
+      : `${(1 / speedup).toFixed(2)}x slower`;
+  };
+
+  for (const c of comparisons) {
+    const fmt = (r: BenchmarkResult) =>
+      r.bytesPerSec ? formatBytesPerSec(r.bytesPerSec) : formatTime(r.mean);
+
+    const row = [
+      c.scenario.substring(0, colWidths[0] - 1),
+      fmt(c.newStream),
+      fmt(c.webStream),
+      fmt(c.nodeStream),
+      fmt(c.effectStream),
+      formatSpeedup(c.newVsEffect.speedup, c.newVsEffect.confidence),
+      formatSpeedup(c.webVsEffect.speedup, c.webVsEffect.confidence),
+      formatSpeedup(c.nodeVsEffect.speedup, c.nodeVsEffect.confidence),
+    ];
+
+    console.log(row.map((v, i) => v.padEnd(colWidths[i])).join(' | '));
+  }
+
+  console.log('='.repeat(160));
+
+  const count = (field: 'newVsEffect' | 'webVsEffect' | 'nodeVsEffect', pred: (c: EffectComparison) => boolean) =>
+    comparisons.filter((c) => c[field].confidence === 'significant' && pred(c)).length;
+
+  const fasterNew = count('newVsEffect', (c) => c.newVsEffect.speedup >= 1);
+  const slowerNew = count('newVsEffect', (c) => c.newVsEffect.speedup < 1);
+  const fasterWeb = count('webVsEffect', (c) => c.webVsEffect.speedup >= 1);
+  const slowerWeb = count('webVsEffect', (c) => c.webVsEffect.speedup < 1);
+  const fasterNode = count('nodeVsEffect', (c) => c.nodeVsEffect.speedup >= 1);
+  const slowerNode = count('nodeVsEffect', (c) => c.nodeVsEffect.speedup < 1);
+
+  console.log(`\nNew Stream vs Effect:  ${fasterNew} faster, ${slowerNew} slower, ${comparisons.length - fasterNew - slowerNew} within noise`);
+  console.log(`Web Stream vs Effect:  ${fasterWeb} faster, ${slowerWeb} slower, ${comparisons.length - fasterWeb - slowerWeb} within noise`);
+  console.log(`Node Stream vs Effect: ${fasterNode} faster, ${slowerNode} slower, ${comparisons.length - fasterNode - slowerNode} within noise`);
+  console.log(`Samples per benchmark: ${comparisons[0]?.newStream.iterations || 'N/A'}`);
+}
+
 /**
  * Generate random data of specified size
  */

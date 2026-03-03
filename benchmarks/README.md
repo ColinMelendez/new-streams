@@ -73,12 +73,65 @@ These benchmarks are designed for **fair comparisons** between the APIs:
 ### 06-consumption.ts
 **Consumption Methods** - Different ways to read stream data.
 
+### 18-effect-throughput.ts
+**effect/Stream Throughput** - Four-way comparison adding `effect/Stream` (v3) to the throughput scenarios from `01-throughput.ts`. Uses `Stream.fromIterable + Stream.runCollect` for byte collection and `Stream.runFold` for counting.
+
 | Scenario | Description |
 |----------|-------------|
-| bytes() | Collect and concatenate all data |
-| text() | Collect and decode to string |
-| Async iteration | `for await...of` loop |
-| Iterator loop | Manual `iterator.next()` calls |
+| Large/Medium/Small/Tiny chunks | Byte collection at various chunk sizes |
+| Async iteration | Byte counting via `Stream.runFold` |
+| Generator source | `Stream.fromAsyncIterable` from async generator |
+
+### 19-effect-transforms.ts
+**effect/Stream Transforms** - Four-way comparison adding `effect/Stream` to the transform scenarios from `03-transforms.ts`.
+
+| Scenario | effect/Stream API |
+|----------|-------------------|
+| Identity transform | `Stream.map(chunk => chunk)` |
+| XOR transform | `Stream.map` with byte manipulation |
+| Expanding 1:2 | `Stream.mapConcatChunk(chunk => Chunk.make(chunk, chunk))` |
+| Chained 3x | Three sequential `Stream.map` calls |
+| Async transform | `Stream.mapEffect(chunk => Effect.promise(...))` |
+
+### 20-effect-pipelines.ts
+**effect/Stream Pipelines** - Four-way comparison adding `effect/Stream` (v3) to the pipeline scenarios from `04-pipelines.ts`. Uses `Stream.fromIterable + Stream.runFold` as the sink.
+
+| Scenario | Description |
+|----------|-------------|
+| Simple pipeline | Source → `Stream.runFold` byte count |
+| Pipeline + XOR | `Stream.map` CPU-bound transform + `Stream.runFold` |
+| Multi-stage 3x | Three chained `Stream.map` calls + `Stream.runFold` |
+| High-frequency | Many tiny chunks (64B × 20000) through `Stream.runFold` |
+
+### 21-effect-v4-throughput.ts
+**effect/Stream v4 Throughput** - Mirrors `18-effect-throughput.ts` using effect v4. Key v4 API changes: `Stream.fromArray` instead of `Stream.fromIterable`, `Stream.runCollect` returns `Array<A>` directly (no `Chunk.toArray` needed), `Stream.runFold` takes an initial-value thunk.
+
+| Scenario | Description |
+|----------|-------------|
+| Large/Medium/Small/Tiny chunks | Byte collection at various chunk sizes |
+| Async iteration | Byte counting via `Stream.runFold(() => 0, f)` |
+| Generator source | `Stream.fromAsyncIterable` from async generator |
+
+### 22-effect-v4-transforms.ts
+**effect/Stream v4 Transforms** - Mirrors `19-effect-transforms.ts` using effect v4. Key v4 API change: expanding 1:2 uses `Stream.map(c => [c, c]) + Stream.flattenArray` (replacing the removed `Stream.mapConcatChunk`).
+
+| Scenario | effect/Stream v4 API |
+|----------|----------------------|
+| Identity transform | `Stream.map(chunk => chunk)` |
+| XOR transform | `Stream.map` with byte manipulation |
+| Expanding 1:2 | `Stream.map(c => [c, c])` + `Stream.flattenArray` |
+| Chained 3x | Three sequential `Stream.map` calls |
+| Async transform | `Stream.mapEffect(chunk => Effect.promise(...))` |
+
+### 23-effect-v4-pipelines.ts
+**effect/Stream v4 Pipelines** - Mirrors `20-effect-pipelines.ts` using effect v4. Uses `Stream.fromArray + Stream.runFold(() => 0, f)` as the sink.
+
+| Scenario | Description |
+|----------|-------------|
+| Simple pipeline | Source → `Stream.runFold` byte count |
+| Pipeline + XOR | `Stream.map` CPU-bound transform + `Stream.runFold` |
+| Multi-stage 3x | Three chained `Stream.map` calls + `Stream.runFold` |
+| High-frequency | Many tiny chunks (64B × 20000) through `Stream.runFold` |
 
 ## Latest Results
 
@@ -175,3 +228,21 @@ Node.js Streams and Web Streams generally perform similarly, with Node.js Stream
 6. **Benchmark ordering**: CPU-intensive benchmarks (like XOR transform) use global warmup of all three implementations before measurement to avoid JIT compilation bias.
 
 7. **Node.js Streams specifics**: Node.js Streams use `Readable`, `Transform`, `PassThrough`, and `Writable` from the `node:stream` module. For push-based scenarios, `PassThrough` with `cork()`/`uncork()` is used for batch writes.
+
+8. **effect/Stream specifics**: effect/Stream (v3) uses `Stream.fromIterable`, `Stream.map`, `Stream.flatMap`, `Stream.mapEffect`, and `Stream.runFold`/`Stream.runCollect`. All operations run inside `Effect.runPromise`. See `18-effect-throughput.ts`, `19-effect-transforms.ts`, `20-effect-pipelines.ts`.
+
+### effect/Stream Summary
+
+effect/Stream (v3) sits between Web/Node Streams and the New API for most workloads:
+
+- **CPU-bound transforms (XOR)**: All APIs perform equivalently — the work dominates overhead
+- **Large chunks / collection**: effect/Stream is on par with Node.js Streams (memory-bandwidth bound)
+- **Small/tiny chunks (counting)**: effect/Stream is faster than Web Streams, roughly equal to or faster than Node.js Streams
+- **Identity transforms / chained maps**: effect/Stream is significantly faster than Web/Node Streams but much slower than the New API's batched model
+- **flatMap (expanding)**: Very expensive in effect/Stream due to sub-stream creation per element; significantly slower than all other APIs
+- **Async transforms (mapEffect)**: Similar cost to Web/Node Streams per element; much slower than the New API's batched async transform
+- **Async generator source**: effect/Stream's `fromAsyncIterable` has higher overhead than `Readable.from()` or the New API
+
+The New Streams API's batched iteration model (`Uint8Array[]` per yield) is the primary reason for its large advantage in identity/chained/async transform scenarios.
+
+effect/Stream (v4) makes notable performance improvements over v3 and matches the new API for most workloads.

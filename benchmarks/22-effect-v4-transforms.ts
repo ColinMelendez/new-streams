@@ -309,7 +309,8 @@ async function runBenchmarks(): Promise<EffectComparison[]> {
         // v4 replaces mapConcatChunk with map-to-array + flattenArray
         const total = await Effect.runPromise(
           Stream.fromArray(chunks).pipe(
-            Stream.flatMap((chunk) => Stream.fromArray([chunk, chunk])),
+            Stream.map((chunk) => [chunk, chunk] as const),
+            Stream.flattenArray,
             Stream.runFold(() => 0, (acc, chunk) => acc + chunk.length)
           )
         );

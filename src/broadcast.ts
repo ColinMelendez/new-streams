@@ -724,7 +724,7 @@ class BroadcastWriter implements Writer, Drainable {
  */
 export function broadcast(options?: BroadcastOptions): BroadcastResult {
   const opts: Required<BroadcastOptions> = {
-    highWaterMark: options?.highWaterMark ?? 16,
+    highWaterMark: Math.max(1, options?.highWaterMark ?? 16),
     backpressure: options?.backpressure ?? 'strict',
     signal: options?.signal as AbortSignal,
   };

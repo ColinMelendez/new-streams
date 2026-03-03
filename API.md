@@ -36,13 +36,16 @@ import { Stream } from 'new-streams';
 // Create a push stream
 const { writer, readable } = Stream.push();
 
-// Write data. Backpressure is strictly enforced by default.
-await writer.write("Hello, World!");
-await writer.end();
+// Producer and consumer run concurrently. With strict backpressure
+// (the default), writes block until the consumer reads.
+const producing = (async () => {
+  await writer.write("Hello, World!");
+  await writer.end();
+})();
 
-// Consume as text
 const text = await Stream.text(readable);
 console.log(text); // "Hello, World!"
+await producing;
 ```
 
 See [USAGE.md](USAGE.md) for more examples.
@@ -153,17 +156,21 @@ const { writer, readable } = Stream.push({
   backpressure: 'drop-oldest'
 });
 
-// Producer
-await writer.write("chunk1");
-await writer.write("chunk2");
-await writer.end();
+// Producer and consumer must run concurrently. With strict backpressure
+// (the default), awaited writes will block until the consumer reads.
+const producing = (async () => {
+  await writer.write("chunk1");
+  await writer.write("chunk2");
+  await writer.end();
+})();
 
-// Consumer
 for await (const chunks of readable) {
   for (const chunk of chunks) {
     console.log(chunk);
   }
 }
+
+await producing;
 ```
 
 Note that like the rest of the API, transforms are pull-driven — no data flows
@@ -222,6 +229,25 @@ intended for high-performance scenarios, used in conjunction with
 if (!writer.writeSync(chunk)) {
   // If that fails, fall back to async write
   await writer.write(chunk);
+}
+```
+
+The `WriteOptions.signal` allows per-operation cancellation. A cancelled write
+is removed from the queue without putting the writer into an error state -
+subsequent writes can still succeed:
+
+```typescript
+// Cancel a single slow write after 5 seconds
+const ac = new AbortController();
+setTimeout(() => ac.abort(), 5000);
+
+try {
+  await writer.write(largeChunk, { signal: ac.signal });
+} catch (err) {
+  if (err.name === 'AbortError') {
+    // This write was cancelled, but writer is still open
+    await writer.write(fallbackChunk);
+  }
 }
 ```
 
@@ -524,10 +550,13 @@ const uppercase: TransformFn = (chunks, { signal }) => {
   });
 };
 
-// Stateful transform (object with generator function)
+// Stateful transform (object with generator function).
+// The signal fires when the pipeline is torn down (consumer breaks,
+// error, or explicit cancellation). Use it to abort in-flight work.
 const compress: TransformObject = {
   async *transform(source, { signal }) {
     const compressor = createCompressor();
+    signal.addEventListener('abort', () => compressor.cancel());
     try {
       for await (const chunks of source) {
         if (chunks === null) {
@@ -913,19 +942,22 @@ interface Broadcast {
 ```typescript
 const { writer, broadcast } = Stream.broadcast({ highWaterMark: 100 });
 
-// Create consumers
+// Create consumers before writing
 const consumer1 = broadcast.push();
 const consumer2 = broadcast.push(decompress);
 
-// Producer pushes to all consumers
-await writer.write("shared data");
-await writer.end();
+// Producer and consumers must run concurrently. Awaited writes
+// block when the buffer fills until consumers read.
+const producing = (async () => {
+  await writer.write("shared data");
+  await writer.end();
+})();
 
-// Each consumer receives independently
 const [result1, result2] = await Promise.all([
   Stream.text(consumer1),
   Stream.text(consumer2)
 ]);
+await producing;
 ```
 
 ### `Stream.share(source, options?)`
@@ -1095,9 +1127,11 @@ for (const item of hugeDataset) {
   writer.write(item);  // Not awaited! Queues up unboundedly
 }
 
-// GOOD: Properly awaited (works in both strict and block)
+// GOOD: Properly awaited (requires a concurrent consumer reading
+// from the readable, otherwise the first write that fills the
+// buffer will block forever)
 for (const item of hugeDataset) {
-  await writer.write(item);  // Waits for backpressure
+  await writer.write(item);  // Waits for consumer to read
 }
 ```
 
@@ -1157,15 +1191,24 @@ const { writer, readable } = Stream.push({
   backpressure: 'block'
 });
 
-// Works, but dangerous without await:
+// Start consumer concurrently
+const consuming = (async () => {
+  for await (const chunks of readable) {
+    await processChunks(chunks);
+  }
+})();
+
+// Dangerous without await - queues indefinitely, may exhaust memory:
 for (const item of hugeDataset) {
-  writer.write(item);  // Queues indefinitely, may exhaust memory!
+  writer.write(item);
 }
 
-// Safe usage:
+// Safe - awaited writes block until the consumer reads:
 for (const item of hugeDataset) {
-  await writer.write(item);  // Waits for consumer
+  await writer.write(item);
 }
+await writer.end();
+await consuming;
 ```
 
 Block mode trusts the producer to properly await writes. Use it when:
@@ -1264,7 +1307,11 @@ class JsonMessage {
   }
 }
 
-await writer.write(new JsonMessage({ hello: "world" }));
+// toStreamable is used by Stream.from() and transforms to normalize inputs.
+// It is not used by writer.write() which only accepts Uint8Array | string.
+const readable = Stream.from(new JsonMessage({ hello: "world" }));
+const text = await Stream.text(readable);
+// text === '{"hello":"world"}'
 ```
 
 The return value of `toStreamable` can be any supported input type (string,

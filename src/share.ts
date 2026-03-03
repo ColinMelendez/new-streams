@@ -650,7 +650,7 @@ export function share(
   options?: ShareOptions
 ): ShareInterface {
   const opts: Required<ShareOptions> = {
-    highWaterMark: options?.highWaterMark ?? 16,
+    highWaterMark: Math.max(1, options?.highWaterMark ?? 16),
     backpressure: options?.backpressure ?? 'strict',
     signal: options?.signal as AbortSignal,
   };
@@ -683,7 +683,7 @@ export function shareSync(
   options?: ShareSyncOptions
 ): SyncShareInterface {
   const opts: Required<ShareSyncOptions> = {
-    highWaterMark: options?.highWaterMark ?? 16,
+    highWaterMark: Math.max(1, options?.highWaterMark ?? 16),
     backpressure: options?.backpressure ?? 'strict',
   };
 

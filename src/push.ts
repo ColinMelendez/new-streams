@@ -100,7 +100,7 @@ class PushQueue {
   private abortHandler?: () => void;
 
   constructor(options: PushStreamOptions = {}) {
-    this.highWaterMark = options.highWaterMark ?? 1;
+    this.highWaterMark = Math.max(1, options.highWaterMark ?? 1);
     this.backpressure = options.backpressure ?? 'strict';
     this.signal = options.signal;
 

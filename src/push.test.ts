@@ -144,6 +144,35 @@ describe('push()', () => {
       const chunks = await collect(readable);
       assert.strictEqual(chunks.length, 1000);
     });
+
+    // PUSH-032b: highWaterMark of 0 is clamped to 1
+    it('should clamp highWaterMark of 0 to 1 [PUSH-032b]', async () => {
+      const { writer, readable } = push({ highWaterMark: 0 });
+
+      // Should behave like highWaterMark: 1 — one sync write succeeds
+      assert.strictEqual(writer.writeSync('hello'), true);
+      assert.strictEqual(writer.desiredSize, 0);
+
+      // Second sync write should fail (buffer full)
+      assert.strictEqual(writer.writeSync('world'), false);
+
+      await writer.end();
+      const result = await collectText(readable);
+      assert.strictEqual(result, 'hello');
+    });
+
+    // PUSH-032c: negative highWaterMark is clamped to 1
+    it('should clamp negative highWaterMark to 1 [PUSH-032c]', async () => {
+      const { writer, readable } = push({ highWaterMark: -5 });
+
+      assert.strictEqual(writer.writeSync('hello'), true);
+      assert.strictEqual(writer.desiredSize, 0);
+      assert.strictEqual(writer.writeSync('world'), false);
+
+      await writer.end();
+      const result = await collectText(readable);
+      assert.strictEqual(result, 'hello');
+    });
   });
 
   describe('writev counts as single slot', () => {

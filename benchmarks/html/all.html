@@ -26,7 +26,7 @@
       Click "Run All Benchmarks" to start
     </div>
     
-    <h2>All Results</h2>
+    <h2>New Streams vs Web Streams</h2>
     <table class="results-table" id="resultsTable">
       <thead>
         <tr>
@@ -38,6 +38,21 @@
         </tr>
       </thead>
       <tbody id="resultsBody">
+      </tbody>
+    </table>
+    
+    <h2>Internal Comparisons</h2>
+    <table class="results-table" id="internalTable">
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Test</th>
+          <th>Variant A</th>
+          <th>Variant B</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody id="internalBody">
       </tbody>
     </table>
     
@@ -84,8 +99,7 @@
     const summary = document.getElementById('summary');
     const status = document.getElementById('status');
     const resultsBody = document.getElementById('resultsBody');
-    const runBtn = document.getElementById('runBtn');
-    
+    const internalBody = document.getElementById('internalBody');
     const allResults = [];
     
     function log(msg) {
@@ -99,6 +113,12 @@
       status.textContent = msg;
     }
     
+    function formatComparison(ratio) {
+      return ratio > 1
+        ? `<span style="color: var(--success)">${ratio.toFixed(2)}x faster</span>`
+        : `<span style="color: var(--warning)">${(1/ratio).toFixed(2)}x slower</span>`;
+    }
+
     function addResult(category, name, newOps, webOps) {
       const ratio = newOps / webOps;
       const isFaster = ratio > 1;
@@ -106,18 +126,28 @@
       allResults.push({ category, name, newOps, webOps, ratio, isFaster });
       
       const row = document.createElement('tr');
-      const comparison = isFaster
-        ? `<span style="color: var(--success)">${ratio.toFixed(2)}x faster</span>`
-        : `<span style="color: var(--warning)">${(1/ratio).toFixed(2)}x slower</span>`;
-      
       row.innerHTML = `
         <td>${category}</td>
         <td>${name}</td>
         <td>${newOps.toFixed(1)} ops/s</td>
         <td>${webOps.toFixed(1)} ops/s</td>
-        <td>${comparison}</td>
+        <td>${formatComparison(ratio)}</td>
       `;
       resultsBody.appendChild(row);
+    }
+
+    function addInternalResult(category, name, label1, ops1, label2, ops2) {
+      const ratio = ops1 / ops2;
+      
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${category}</td>
+        <td>${name}</td>
+        <td>${label1}: ${ops1.toFixed(1)} ops/s</td>
+        <td>${label2}: ${ops2.toFixed(1)} ops/s</td>
+        <td>${formatComparison(ratio)}</td>
+      `;
+      internalBody.appendChild(row);
     }
     
     function updateSummary() {
@@ -264,8 +294,7 @@
       log(`Sync pullSync():  ${syncResult.ops.toFixed(1)} ops/s`);
       log(`Async pull():     ${asyncResult.ops.toFixed(1)} ops/s`);
       
-      // For sync vs async, show sync as "new" since it's the better option when applicable
-      addResult('Sync Pipeline', '1 Transform (sync vs async)', syncResult.ops, asyncResult.ops);
+      addInternalResult('Sync Pipeline', '1 Transform', 'pullSync()', syncResult.ops, 'pull() async', asyncResult.ops);
     }
     
     // ========================================
@@ -275,6 +304,7 @@
     async function runAllBenchmarks() {
       allResults.length = 0;
       resultsBody.innerHTML = '';
+      internalBody.innerHTML = '';
       output.textContent = '';
       summary.textContent = 'Running benchmarks...';
       

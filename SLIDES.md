@@ -157,10 +157,14 @@ const { writer, readable } = Stream.push({
   backpressure: 'strict' // Rejects if producer ignores backpressure
 });
 
-// This pattern is safe - waits for backpressure
+// Consumer must run concurrently
+const consuming = Stream.text(readable);
+
+// Safe - awaited writes wait for the consumer to make room
 for (const item of largeDataset) {
-  await writer.write(item);  // Properly awaited
+  await writer.write(item);
 }
+await writer.end();
 ```
 
 </v-click>
@@ -208,7 +212,7 @@ Stream.ondrain()       // Wait for backpressure to clear
 
 # Creating Streams
 
-```typescript {all|1-2|4-7|9-14}
+```typescript {all|1-2|4-8|10-17}
 // From existing data
 const readable = Stream.from("Hello, World!");
 
@@ -218,11 +222,14 @@ function* chunks() {
 }
 const readable = Stream.from(chunks());
 
-// Push-based streams
+// Push-based streams (producer and consumer run concurrently)
 const { writer, readable } = Stream.push();
-await writer.write("Hello ");
-await writer.write("World!");
-await writer.end();
+(async () => {
+  await writer.write("Hello ");
+  await writer.write("World!");
+  await writer.end();
+})();
+console.log(await Stream.text(readable)); // "Hello World!"
 ```
 
 ---
@@ -321,11 +328,18 @@ const bytesWritten = await Stream.pipeTo(
 const { writer, broadcast } =
   Stream.broadcast({ highWaterMark: 100 });
 
-const consumer1 = broadcast.push();
-const consumer2 = broadcast.push(decompress);
+const c1 = broadcast.push();
+const c2 = broadcast.push(decompress);
 
-await writer.write("shared data");
-await writer.end();
+// Producer and consumers run concurrently
+(async () => {
+  await writer.write("shared data");
+  await writer.end();
+})();
+
+await Promise.all([
+  Stream.text(c1), Stream.text(c2)
+]);
 ```
 
 </div>
@@ -339,9 +353,16 @@ const shared = Stream.share(
   { highWaterMark: 100 }
 );
 
-const raw = shared.pull();
-const decompressed = shared.pull(decompress);
-const parsed = shared.pull(decompress, parse);
+const c1 = shared.pull();
+const c2 = shared.pull(decompress);
+const c3 = shared.pull(decompress, parse);
+
+// All consumers share the same source
+const [raw, dec, parsed] = await Promise.all([
+  Stream.bytes(c1),
+  Stream.bytes(c2),
+  Stream.bytes(c3),
+]);
 ```
 
 </div>
@@ -462,7 +483,7 @@ layout: section
 # Getting Started
 
 ```bash
-# Run tests (194 tests)
+# Run tests (273 tests)
 npm test
 
 # Run samples

@@ -1098,6 +1098,11 @@ buffering system. Think of it like a bucket (slots) being filled through a hose
 
 When both the slots and pending writes are full, backpressure is signaled.
 
+> **Note:** `highWaterMark` is clamped to a minimum of 1. Passing 0 (or negative
+> values) is treated as 1. With `highWaterMark: 0`, strict mode would reject
+> every write and block mode would deadlock, so the clamp prevents these
+> degenerate cases.
+
 **The Two Buffers:**
 
 1. **Slots (the bucket)**: Data ready for the consumer, limited by `highWaterMark`

@@ -287,9 +287,16 @@ async function runBenchmarks(): Promise<void> {
           }
         }
 
-        const total = chunks.reduce((acc, c) => acc + c.length, 0);
-        if (total !== totalBytes) {
-          throw new Error(`Wrong size: ${total} vs ${totalBytes}`);
+        let totalLength = 0;
+        for (const c of chunks) totalLength += c.length;
+        const result = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const c of chunks) {
+          result.set(c, offset);
+          offset += c.length;
+        }
+        if (result.length !== totalBytes) {
+          throw new Error(`Wrong size: ${result.length} vs ${totalBytes}`);
         }
       },
       { totalBytes, minSamples: 15, minTimeMs: 3000 }

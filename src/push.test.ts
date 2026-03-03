@@ -84,28 +84,36 @@ describe('push()', () => {
   });
 
   describe('backpressure behavior', () => {
-    // PUSH-030: Default highWaterMark is 1
+    // PUSH-030: Default highWaterMark is 4
     // PUSH-005: Writer.writeSync() returns boolean
     // PUSH-020: desiredSize reflects available buffer space
-    it('should respect default highWaterMark of 1 [PUSH-030, PUSH-005, PUSH-020]', async () => {
+    it('should respect default highWaterMark of 4 [PUSH-030, PUSH-005, PUSH-020]', async () => {
       const { writer, readable } = push();
 
-      // First write should succeed synchronously
+      // First 4 writes should succeed synchronously
       assert.strictEqual(writer.writeSync('first'), true);
+      assert.strictEqual(writer.desiredSize, 3);
+      assert.strictEqual(writer.writeSync('second'), true);
+      assert.strictEqual(writer.desiredSize, 2);
+      assert.strictEqual(writer.writeSync('third'), true);
+      assert.strictEqual(writer.desiredSize, 1);
+      assert.strictEqual(writer.writeSync('fourth'), true);
       assert.strictEqual(writer.desiredSize, 0);
 
-      // Second write should fail synchronously (buffer full)
-      assert.strictEqual(writer.writeSync('second'), false);
+      // Fifth write should fail synchronously (buffer full)
+      assert.strictEqual(writer.writeSync('fifth'), false);
 
-      // Read the first chunk to make space
+      // Read drains all buffered chunks as one batch
       const iterator = readable[Symbol.asyncIterator]();
       const { value } = await iterator.next();
       assert.ok(value);
+      assert.strictEqual(value.length, 4);
       assert.strictEqual(toString(value[0]), 'first');
+      assert.strictEqual(toString(value[3]), 'fourth');
 
-      // Now should be able to write again
-      assert.strictEqual(writer.desiredSize, 1);
-      assert.strictEqual(writer.writeSync('second'), true);
+      // All 4 slots freed — desiredSize back to full
+      assert.strictEqual(writer.desiredSize, 4);
+      assert.strictEqual(writer.writeSync('fifth'), true);
 
       await writer.end();
       await iterator.return?.();
@@ -230,7 +238,7 @@ describe('push()', () => {
     it('should be null after close [PUSH-022]', async () => {
       const { writer } = push();
 
-      assert.strictEqual(writer.desiredSize, 1);
+      assert.strictEqual(writer.desiredSize, 4);
       await writer.end();
       assert.strictEqual(writer.desiredSize, null);
     });
@@ -239,7 +247,7 @@ describe('push()', () => {
     it('should be null after fail [PUSH-023]', async () => {
       const { writer } = push();
 
-      assert.strictEqual(writer.desiredSize, 1);
+      assert.strictEqual(writer.desiredSize, 4);
       await writer.fail(new Error('test'));
       assert.strictEqual(writer.desiredSize, null);
     });

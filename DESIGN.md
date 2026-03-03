@@ -167,7 +167,7 @@ function push(
 ): { writer: Writer; readable: AsyncIterable<Uint8Array[]> }
 
 interface PushStreamOptions {
-  highWaterMark?: number;       // Max pending writes (default: 1)
+  highWaterMark?: number;       // Max pending writes (default: 4)
   backpressure?: BackpressurePolicy;  // 'strict' | 'block' | 'drop-oldest' | 'drop-newest'
   signal?: AbortSignal;
 }

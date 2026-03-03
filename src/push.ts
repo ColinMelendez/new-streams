@@ -57,7 +57,7 @@ interface PendingDrain {
  *
  * This implements the core buffering logic shared between writer and readable.
  * - Chunk-oriented backpressure: counts write/writev calls, not bytes
- * - Configurable highWaterMark (default: 1)
+ * - Configurable highWaterMark (default: 4)
  * - Four backpressure policies: strict, block, drop-oldest, drop-newest
  *
  * The queue has two parts:
@@ -104,7 +104,7 @@ class PushQueue {
   private abortHandler?: () => void;
 
   constructor(options: PushStreamOptions = {}) {
-    this.highWaterMark = Math.max(1, options.highWaterMark ?? 1);
+    this.highWaterMark = Math.max(1, options.highWaterMark ?? 4);
     this.backpressure = options.backpressure ?? 'strict';
     this.signal = options.signal;
 

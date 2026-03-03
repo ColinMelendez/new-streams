@@ -24,6 +24,7 @@ import {
 import { isAsyncIterable, isSyncIterable } from './from.js';
 import { pull as pullWithTransforms, pullSync as pullSyncWithTransforms } from './pull.js';
 import { parsePullArgs } from './utils.js';
+import { RingBuffer } from './ringbuffer.js';
 
 // =============================================================================
 // Consumer State
@@ -52,7 +53,7 @@ interface SyncConsumerState {
 // =============================================================================
 
 class ShareImpl implements ShareInterface {
-  private buffer: Uint8Array[][] = [];
+  private buffer = new RingBuffer<Uint8Array[]>();
   private bufferStart = 0;
   private consumers: Set<AsyncConsumerState> = new Set();
   private sourceIterator: AsyncIterator<Uint8Array[]> | null = null;
@@ -137,7 +138,7 @@ class ShareImpl implements ShareInterface {
             // Check if data is available in buffer
             const bufferIndex = state.cursor - self.bufferStart;
             if (bufferIndex < self.buffer.length) {
-              const chunk = self.buffer[bufferIndex];
+              const chunk = self.buffer.get(bufferIndex);
               state.cursor++;
               self.tryTrimBuffer();
               return { done: false, value: chunk };
@@ -172,7 +173,7 @@ class ShareImpl implements ShareInterface {
 
             const newBufferIndex = state.cursor - self.bufferStart;
             if (newBufferIndex < self.buffer.length) {
-              const chunk = self.buffer[newBufferIndex];
+              const chunk = self.buffer.get(newBufferIndex);
               state.cursor++;
               self.tryTrimBuffer();
               return { done: false, value: chunk };
@@ -377,7 +378,7 @@ class ShareImpl implements ShareInterface {
     const minCursor = this.getMinCursor();
     const trimCount = minCursor - this.bufferStart;
     if (trimCount > 0) {
-      this.buffer.splice(0, trimCount);
+      this.buffer.trimFront(trimCount);
       this.bufferStart = minCursor;
       // Wake up any waiting pullers
       for (const waiter of this.pullWaiters) {
@@ -393,7 +394,7 @@ class ShareImpl implements ShareInterface {
 // =============================================================================
 
 class SyncShareImpl implements SyncShareInterface {
-  private buffer: Uint8Array[][] = [];
+  private buffer = new RingBuffer<Uint8Array[]>();
   private bufferStart = 0;
   private consumers: Set<SyncConsumerState> = new Set();
   private sourceIterator: Iterator<Uint8Array[]> | null = null;
@@ -466,7 +467,7 @@ class SyncShareImpl implements SyncShareInterface {
             // Check if data is available in buffer
             const bufferIndex = state.cursor - self.bufferStart;
             if (bufferIndex < self.buffer.length) {
-              const chunk = self.buffer[bufferIndex];
+              const chunk = self.buffer.get(bufferIndex);
               state.cursor++;
               self.tryTrimBuffer();
               return { done: false, value: chunk };
@@ -520,7 +521,7 @@ class SyncShareImpl implements SyncShareInterface {
 
             const newBufferIndex = state.cursor - self.bufferStart;
             if (newBufferIndex < self.buffer.length) {
-              const chunk = self.buffer[newBufferIndex];
+              const chunk = self.buffer.get(newBufferIndex);
               state.cursor++;
               self.tryTrimBuffer();
               return { done: false, value: chunk };
@@ -628,7 +629,7 @@ class SyncShareImpl implements SyncShareInterface {
     const minCursor = this.getMinCursor();
     const trimCount = minCursor - this.bufferStart;
     if (trimCount > 0) {
-      this.buffer.splice(0, trimCount);
+      this.buffer.trimFront(trimCount);
       this.bufferStart = minCursor;
     }
   }

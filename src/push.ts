@@ -18,6 +18,7 @@ import type {
 import { drainableProtocol } from './types.js';
 import { toUint8Array, allUint8Array } from './utils.js';
 import { pull as pullWithTransforms } from './pull.js';
+import { RingBuffer } from './ringbuffer.js';
 
 // Cached resolved promise to avoid allocating a new one on every sync fast-path.
 const kResolvedPromise: Promise<void> = Promise.resolve();
@@ -71,13 +72,13 @@ interface PendingDrain {
  */
 class PushQueue {
   /** Buffered chunks (each slot is from one write/writev call) */
-  private slots: Uint8Array[][] = [];
+  private slots = new RingBuffer<Uint8Array[]>();
 
   /** Pending writes waiting for buffer space (strict policy only) */
-  private pendingWrites: PendingWrite[] = [];
+  private pendingWrites = new RingBuffer<PendingWrite>();
 
   /** Pending reads waiting for data */
-  private pendingReads: PendingRead[] = [];
+  private pendingReads = new RingBuffer<PendingRead>();
 
   /** Pending drains waiting for backpressure to clear */
   private pendingDrains: PendingDrain[] = [];
@@ -280,7 +281,7 @@ class PushQueue {
       const onAbort = () => {
         // Remove from queue so it doesn't occupy a slot
         const idx = this.pendingWrites.indexOf(entry);
-        if (idx !== -1) this.pendingWrites.splice(idx, 1);
+        if (idx !== -1) this.pendingWrites.removeAt(idx);
         reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
       };
 
@@ -426,10 +427,9 @@ class PushQueue {
    */
   private drain(): Uint8Array[] {
     const result: Uint8Array[] = [];
-    for (const slot of this.slots) {
-      result.push(...slot);
+    while (this.slots.length > 0) {
+      result.push(...this.slots.shift()!);
     }
-    this.slots = [];
     return result;
   }
 
@@ -503,10 +503,8 @@ class PushQueue {
    * Reject all pending reads with an error.
    */
   private rejectPendingReads(error: Error): void {
-    const reads = this.pendingReads;
-    this.pendingReads = [];
-    for (const pending of reads) {
-      pending.reject(error);
+    while (this.pendingReads.length > 0) {
+      this.pendingReads.shift()!.reject(error);
     }
   }
 
@@ -514,10 +512,8 @@ class PushQueue {
    * Reject all pending writes with an error.
    */
   private rejectPendingWrites(error: Error): void {
-    const writes = this.pendingWrites;
-    this.pendingWrites = [];
-    for (const pending of writes) {
-      pending.reject(error);
+    while (this.pendingWrites.length > 0) {
+      this.pendingWrites.shift()!.reject(error);
     }
   }
 

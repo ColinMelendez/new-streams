@@ -23,6 +23,7 @@ import {
 import { isAsyncIterable, isSyncIterable } from './from.js';
 import { pull as pullWithTransforms } from './pull.js';
 import { allUint8Array } from './utils.js';
+import { RingBuffer } from './ringbuffer.js';
 
 // Shared TextEncoder instance
 const encoder = new TextEncoder();
@@ -92,7 +93,7 @@ interface ConsumerState {
 // =============================================================================
 
 class BroadcastImpl implements BroadcastInterface {
-  private buffer: Uint8Array[][] = [];
+  private buffer = new RingBuffer<Uint8Array[]>();
   private bufferStart = 0; // Index of first chunk in buffer (for cursor mapping)
   private consumers: Set<ConsumerState> = new Set();
   private ended = false;
@@ -171,7 +172,7 @@ class BroadcastImpl implements BroadcastInterface {
             // Check if data is available in buffer
             const bufferIndex = state.cursor - self.bufferStart;
             if (bufferIndex < self.buffer.length) {
-              const chunk = self.buffer[bufferIndex];
+              const chunk = self.buffer.get(bufferIndex);
               state.cursor++;
               self.tryTrimBuffer();
               return { done: false, value: chunk };
@@ -312,7 +313,7 @@ class BroadcastImpl implements BroadcastInterface {
         // First deliver any remaining buffered data
         const bufferIndex = consumer.cursor - this.bufferStart;
         if (bufferIndex < this.buffer.length) {
-          const chunk = this.buffer[bufferIndex];
+          const chunk = this.buffer.get(bufferIndex);
           consumer.cursor++;
           consumer.resolve({ done: false, value: chunk });
         } else {
@@ -390,7 +391,7 @@ class BroadcastImpl implements BroadcastInterface {
     const minCursor = this.getMinCursor();
     const trimCount = minCursor - this.bufferStart;
     if (trimCount > 0) {
-      this.buffer.splice(0, trimCount);
+      this.buffer.trimFront(trimCount);
       this.bufferStart = minCursor;
 
       // Notify writer that buffer space is available for pending writes
@@ -408,7 +409,7 @@ class BroadcastImpl implements BroadcastInterface {
       if (consumer.resolve) {
         const bufferIndex = consumer.cursor - this.bufferStart;
         if (bufferIndex < this.buffer.length) {
-          const chunk = this.buffer[bufferIndex];
+          const chunk = this.buffer.get(bufferIndex);
           consumer.cursor++;
           const resolve = consumer.resolve;
           consumer.resolve = null;
@@ -443,7 +444,7 @@ class BroadcastWriter implements Writer, Drainable {
   private closed = false;
   private aborted = false;
   /** Queue of pending writes waiting for buffer space (strict and block policies) */
-  private pendingWrites: PendingBroadcastWrite[] = [];
+  private pendingWrites = new RingBuffer<PendingBroadcastWrite>();
   /** Queue of pending drains waiting for backpressure to clear */
   private pendingDrains: PendingBroadcastDrain[] = [];
 
@@ -573,7 +574,7 @@ class BroadcastWriter implements Writer, Drainable {
 
       const onAbort = () => {
         const idx = this.pendingWrites.indexOf(entry);
-        if (idx !== -1) this.pendingWrites.splice(idx, 1);
+        if (idx !== -1) this.pendingWrites.removeAt(idx);
         reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
       };
 
@@ -616,9 +617,8 @@ class BroadcastWriter implements Writer, Drainable {
    * Reject all pending writes with an error.
    */
   private rejectPendingWrites(error: Error): void {
-    const writes = this.pendingWrites;
-    this.pendingWrites = [];
-    for (const pending of writes) {
+    while (this.pendingWrites.length > 0) {
+      const pending = this.pendingWrites.shift()!;
       pending.reject(error);
     }
   }

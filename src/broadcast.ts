@@ -9,6 +9,7 @@ import {
   type Writer,
   type WriteOptions,
   type Broadcast as BroadcastInterface,
+  type BackpressurePolicy,
   type BroadcastOptions,
   type BroadcastResult,
   type Transform,
@@ -22,9 +23,14 @@ import {
 
 import { isAsyncIterable, isSyncIterable } from './from.js';
 import { pull as pullWithTransforms } from './pull.js';
+import { allUint8Array } from './utils.js';
+import { RingBuffer } from './ringbuffer.js';
 
 // Shared TextEncoder instance
 const encoder = new TextEncoder();
+
+// Cached resolved promise to avoid allocating a new one on every sync fast-path.
+const kResolvedPromise: Promise<void> = Promise.resolve();
 
 // Non-exported symbol for internal cancel notification from BroadcastImpl to BroadcastWriter.
 // Because this symbol is not exported, external code cannot call it.
@@ -88,7 +94,7 @@ interface ConsumerState {
 // =============================================================================
 
 class BroadcastImpl implements BroadcastInterface {
-  private buffer: Uint8Array[][] = [];
+  private buffer = new RingBuffer<Uint8Array[]>();
   private bufferStart = 0; // Index of first chunk in buffer (for cursor mapping)
   private consumers: Set<ConsumerState> = new Set();
   private ended = false;
@@ -106,6 +112,14 @@ class BroadcastImpl implements BroadcastInterface {
   /** Register the writer for cancel notification. */
   setWriter(w: { [cancelWriter](): void }): void {
     this.writer = w;
+  }
+
+  get backpressurePolicy(): BackpressurePolicy {
+    return this.options.backpressure;
+  }
+
+  get highWaterMark(): number {
+    return this.options.highWaterMark;
   }
 
   get consumerCount(): number {
@@ -167,7 +181,7 @@ class BroadcastImpl implements BroadcastInterface {
             // Check if data is available in buffer
             const bufferIndex = state.cursor - self.bufferStart;
             if (bufferIndex < self.buffer.length) {
-              const chunk = self.buffer[bufferIndex];
+              const chunk = self.buffer.get(bufferIndex);
               state.cursor++;
               self.tryTrimBuffer();
               return { done: false, value: chunk };
@@ -202,7 +216,7 @@ class BroadcastImpl implements BroadcastInterface {
             return { done: true, value: undefined };
           },
 
-          async throw(error?: Error): Promise<IteratorResult<Uint8Array[]>> {
+          async throw(_error?: Error): Promise<IteratorResult<Uint8Array[]>> {
             state.detached = true;
             state.resolve = null;
             state.reject = null;
@@ -308,7 +322,7 @@ class BroadcastImpl implements BroadcastInterface {
         // First deliver any remaining buffered data
         const bufferIndex = consumer.cursor - this.bufferStart;
         if (bufferIndex < this.buffer.length) {
-          const chunk = this.buffer[bufferIndex];
+          const chunk = this.buffer.get(bufferIndex);
           consumer.cursor++;
           consumer.resolve({ done: false, value: chunk });
         } else {
@@ -386,7 +400,7 @@ class BroadcastImpl implements BroadcastInterface {
     const minCursor = this.getMinCursor();
     const trimCount = minCursor - this.bufferStart;
     if (trimCount > 0) {
-      this.buffer.splice(0, trimCount);
+      this.buffer.trimFront(trimCount);
       this.bufferStart = minCursor;
 
       // Notify writer that buffer space is available for pending writes
@@ -404,13 +418,12 @@ class BroadcastImpl implements BroadcastInterface {
       if (consumer.resolve) {
         const bufferIndex = consumer.cursor - this.bufferStart;
         if (bufferIndex < this.buffer.length) {
-          const chunk = this.buffer[bufferIndex];
+          const chunk = this.buffer.get(bufferIndex);
           consumer.cursor++;
           const resolve = consumer.resolve;
           consumer.resolve = null;
           consumer.reject = null;
           resolve({ done: false, value: chunk });
-          this.tryTrimBuffer();
         }
       }
     }
@@ -439,7 +452,7 @@ class BroadcastWriter implements Writer, Drainable {
   private closed = false;
   private aborted = false;
   /** Queue of pending writes waiting for buffer space (strict and block policies) */
-  private pendingWrites: PendingBroadcastWrite[] = [];
+  private pendingWrites = new RingBuffer<PendingBroadcastWrite>();
   /** Queue of pending drains waiting for backpressure to clear */
   private pendingDrains: PendingBroadcastDrain[] = [];
 
@@ -484,11 +497,33 @@ class BroadcastWriter implements Writer, Drainable {
     return this.broadcast._getDesiredSize();
   }
 
-  async write(chunk: Uint8Array | string, options?: WriteOptions): Promise<void> {
+  write(chunk: Uint8Array | string, options?: WriteOptions): Promise<void> {
+    // Fast path: no signal, writer open, buffer has space
+    if (!options?.signal && !this.closed && !this.aborted && this.broadcast._canWrite()) {
+      const converted = typeof chunk === 'string' ? encoder.encode(chunk) : chunk;
+      this.broadcast._write([converted]);
+      this.totalBytes += converted.byteLength;
+      return kResolvedPromise;
+    }
     return this.writev([chunk], options);
   }
 
-  async writev(chunks: (Uint8Array | string)[], options?: WriteOptions): Promise<void> {
+  writev(chunks: (Uint8Array | string)[], options?: WriteOptions): Promise<void> {
+    // Fast path: no signal, writer open, buffer has space
+    if (!options?.signal && !this.closed && !this.aborted && this.broadcast._canWrite()) {
+      const converted = allUint8Array(chunks)
+        ? chunks.slice()
+        : chunks.map((c) => typeof c === 'string' ? encoder.encode(c) : c);
+      this.broadcast._write(converted);
+      for (const c of converted) {
+        this.totalBytes += c.byteLength;
+      }
+      return kResolvedPromise;
+    }
+    return this._writevSlow(chunks, options);
+  }
+
+  private async _writevSlow(chunks: (Uint8Array | string)[], options?: WriteOptions): Promise<void> {
     const signal = options?.signal;
 
     // Check for pre-aborted signal
@@ -500,9 +535,9 @@ class BroadcastWriter implements Writer, Drainable {
       throw new Error('Writer is closed');
     }
 
-    const converted = chunks.map((c) =>
-      typeof c === 'string' ? encoder.encode(c) : c
-    );
+    const converted = allUint8Array(chunks)
+      ? chunks.slice()
+      : chunks.map((c) => typeof c === 'string' ? encoder.encode(c) : c);
 
     // Try to write directly to buffer
     if (this.broadcast._write(converted)) {
@@ -514,8 +549,8 @@ class BroadcastWriter implements Writer, Drainable {
 
     // Buffer is full - handle based on policy
     // Note: _canWrite() and _write() handle drop-* policies, so we only get here for strict/block
-    const policy = (this.broadcast as any).options?.backpressure ?? 'strict';
-    const highWaterMark = (this.broadcast as any).options?.highWaterMark ?? 16;
+    const policy = this.broadcast.backpressurePolicy;
+    const highWaterMark = this.broadcast.highWaterMark;
 
     if (policy === 'strict') {
       // In strict mode, highWaterMark limits pendingWrites (the "hose")
@@ -547,7 +582,7 @@ class BroadcastWriter implements Writer, Drainable {
 
       const onAbort = () => {
         const idx = this.pendingWrites.indexOf(entry);
-        if (idx !== -1) this.pendingWrites.splice(idx, 1);
+        if (idx !== -1) this.pendingWrites.removeAt(idx);
         reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
       };
 
@@ -590,9 +625,8 @@ class BroadcastWriter implements Writer, Drainable {
    * Reject all pending writes with an error.
    */
   private rejectPendingWrites(error: Error): void {
-    const writes = this.pendingWrites;
-    this.pendingWrites = [];
-    for (const pending of writes) {
+    while (this.pendingWrites.length > 0) {
+      const pending = this.pendingWrites.shift()!;
       pending.reject(error);
     }
   }
@@ -643,9 +677,9 @@ class BroadcastWriter implements Writer, Drainable {
       return false;
     }
 
-    const converted = chunks.map((c) =>
-      typeof c === 'string' ? encoder.encode(c) : c
-    );
+    const converted = allUint8Array(chunks)
+      ? chunks.slice()
+      : chunks.map((c) => typeof c === 'string' ? encoder.encode(c) : c);
 
     if (this.broadcast._write(converted)) {
       for (const c of converted) {
@@ -656,14 +690,14 @@ class BroadcastWriter implements Writer, Drainable {
     return false;
   }
 
-  async end(options?: WriteOptions): Promise<number> {
+  end(_options?: WriteOptions): Promise<number> {
     // end() is synchronous internally — signal accepted for interface compliance.
-    if (this.closed) return this.totalBytes;
+    if (this.closed) return Promise.resolve(this.totalBytes);
     this.closed = true;
     this.broadcast._end();
     // Resolve pending drains with false - writer closed, no more writes accepted
     this.resolvePendingDrains(false);
-    return this.totalBytes;
+    return Promise.resolve(this.totalBytes);
   }
 
   endSync(): number {
@@ -675,8 +709,8 @@ class BroadcastWriter implements Writer, Drainable {
     return this.totalBytes;
   }
 
-  async fail(reason?: Error): Promise<void> {
-    if (this.aborted) return;
+  fail(reason?: Error): Promise<void> {
+    if (this.aborted) return kResolvedPromise;
     this.aborted = true;
     this.closed = true;
     const error = reason ?? new Error('Failed');
@@ -684,6 +718,7 @@ class BroadcastWriter implements Writer, Drainable {
     // Reject pending drains with the error
     this.rejectPendingDrains(error);
     this.broadcast._abort(error);
+    return kResolvedPromise;
   }
 
   failSync(reason?: Error): boolean {

@@ -73,18 +73,26 @@ async function runBenchmarks(): Promise<BenchmarkComparison[]> {
 
         const readBranch = async (stream: ReadableStream<Uint8Array>) => {
           const reader = stream.getReader();
-          let total = 0;
+          const parts: Uint8Array[] = [];
+          let totalLength = 0;
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
-            total += value.length;
+            parts.push(value);
+            totalLength += value.length;
           }
-          return total;
+          const result = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const part of parts) {
+            result.set(part, offset);
+            offset += part.length;
+          }
+          return result;
         };
 
-        const [total1, total2] = await Promise.all([readBranch(branch1), readBranch(branch2)]);
+        const [result1, result2] = await Promise.all([readBranch(branch1), readBranch(branch2)]);
 
-        if (total1 !== totalBytes || total2 !== totalBytes) {
+        if (result1.length !== totalBytes || result2.length !== totalBytes) {
           throw new Error('Wrong size');
         }
       },
@@ -177,21 +185,29 @@ async function runBenchmarks(): Promise<BenchmarkComparison[]> {
 
         const readBranch = async (stream: ReadableStream<Uint8Array>) => {
           const reader = stream.getReader();
-          let total = 0;
+          const parts: Uint8Array[] = [];
+          let totalLength = 0;
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
-            total += value.length;
+            parts.push(value);
+            totalLength += value.length;
           }
-          return total;
+          const result = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const part of parts) {
+            result.set(part, offset);
+            offset += part.length;
+          }
+          return result;
         };
 
-        const [total1, total2] = await Promise.all([
+        const [result1, result2] = await Promise.all([
           readBranch(branch1.pipeThrough(t1)),
           readBranch(branch2.pipeThrough(t2)),
         ]);
 
-        if (total1 !== totalBytes || total2 !== totalBytes) {
+        if (result1.length !== totalBytes || result2.length !== totalBytes) {
           throw new Error('Wrong size');
         }
       },
@@ -252,18 +268,26 @@ async function runBenchmarks(): Promise<BenchmarkComparison[]> {
 
         const readBranch = async (stream: ReadableStream<Uint8Array>) => {
           const reader = stream.getReader();
-          let total = 0;
+          const parts: Uint8Array[] = [];
+          let totalLength = 0;
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
-            total += value.length;
+            parts.push(value);
+            totalLength += value.length;
           }
-          return total;
+          const result = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const part of parts) {
+            result.set(part, offset);
+            offset += part.length;
+          }
+          return result;
         };
 
-        const [total1, total2] = await Promise.all([readBranch(branch1), readBranch(branch2)]);
+        const [result1, result2] = await Promise.all([readBranch(branch1), readBranch(branch2)]);
 
-        if (total1 !== totalBytes || total2 !== totalBytes) {
+        if (result1.length !== totalBytes || result2.length !== totalBytes) {
           throw new Error('Wrong size');
         }
       },

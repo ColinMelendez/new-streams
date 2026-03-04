@@ -45,7 +45,7 @@ Creates a bonded writer and async iterable pair for push-based streaming.
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| PUSH-030 | Default highWaterMark is 1 | ✅ |
+| PUSH-030 | Default highWaterMark is 4 | ✅ |
 | PUSH-031 | Custom highWaterMark is respected | ✅ |
 | PUSH-032 | Infinity highWaterMark allows unbounded buffering | ✅ |
 | PUSH-033 | writev counts as single slot for backpressure | ✅ |

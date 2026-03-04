@@ -147,7 +147,7 @@ The writer from `Stream.push()` implements the `Writer` interface and is backed 
 
 1. A new writer is created with the original's queue reference, byte count, and state.
 2. The original is detached: all write methods throw `TypeError`.
-3. The new owner can write to the stream and call `end()` / `abort()`.
+3. The new owner can write to the stream and call `end()` / `fail()`.
 
 **Post-transfer behavior:**
 
@@ -156,14 +156,14 @@ The writer from `Stream.push()` implements the `Writer` interface and is backed 
 | `write()` / `writev()` | Throws `TypeError` |
 | `writeSync()` / `writevSync()` | Throws `TypeError` |
 | `end()` / `endSync()` | Throws `TypeError` |
-| `abort()` | No-op (cleanup method) |
-| `abortSync()` | No-op (cleanup method) |
+| `fail()` | No-op (cleanup method) |
+| `failSync()` | No-op (cleanup method) |
 | `desiredSize` | Returns `null` |
 | `[Symbol.transfer]()` | Throws `TypeError` (already detached) |
 
-**Design note:** `abort()` is treated as a cleanup method (no-op on detached) rather than an operational method (throws on detached). This follows the Transfer Protocol's rule: "operational methods throw, cleanup methods no-op." A detached writer has no resources to abort; the new owner holds the queue reference.
+**Design note:** `fail()` is treated as a cleanup method (no-op on detached) rather than an operational method (throws on detached). This follows the Transfer Protocol's rule: "operational methods throw, cleanup methods no-op." A detached writer has no resources to fail; the new owner holds the queue reference.
 
-The distinction between `end()` and `abort()` reflects their intent: `end()` is a **completion signal** — it writes a final state to the queue and transitions the stream to "ended." This is an operational action with observable effects on the consumer. Calling `end()` on a detached writer is a logic error (the caller believes they still own the write channel) and should surface immediately via `TypeError`. In contrast, `abort()` is a **cleanup action** — it says "something went wrong, discard everything." It is expected to be called defensively (e.g., in `catch` blocks, `finally` blocks, or disposal paths) where the caller may not know whether the writer is still valid. A no-op on detach avoids forcing callers to guard every cleanup path with a detach check.
+The distinction between `end()` and `fail()` reflects their intent: `end()` is a **completion signal** — it writes a final state to the queue and transitions the stream to "ended." This is an operational action with observable effects on the consumer. Calling `end()` on a detached writer is a logic error (the caller believes they still own the write channel) and should surface immediately via `TypeError`. In contrast, `fail()` is a **cleanup action** — it says "something went wrong, discard everything." It is expected to be called defensively (e.g., in `catch` blocks, `finally` blocks, or disposal paths) where the caller may not know whether the writer is still valid. A no-op on detach avoids forcing callers to guard every cleanup path with a detach check.
 
 ### 3.3 DuplexChannel
 
@@ -808,7 +808,7 @@ function connectEventSource(url) {
     }
     await ownedWriter.write(event.data);
   };
-  eventSource.onerror = () => ownedWriter.abort(new Error('EventSource failed'));
+  eventSource.onerror = () => ownedWriter.fail(new Error('EventSource failed'));
 
   return readable;
 }

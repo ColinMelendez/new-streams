@@ -1,6 +1,6 @@
 {
   "name": "new-streams",
-  "version": "0.1.1",
+  "version": "0.2.3",
   "author": "James M Snell <jasnell@gmail.com>",
   "description": "Prototype implementation of a redesigned Web Streams API",
   "type": "module",
@@ -14,13 +14,19 @@
     "benchmark:deno": "deno run --allow-read --allow-env --allow-run benchmarks/run-all.ts",
     "benchmark:bun": "bun run benchmarks/run-all.ts",
     "html-samples": "node samples/html/server.mjs",
+    "lint": "eslint src/ benchmarks/ samples/",
+    "lint:fix": "eslint src/ benchmarks/ samples/ --fix",
     "slides": "slidev SLIDES.md"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@slidev/cli": "^52.11.5",
     "@types/node": "^20.11.0",
+    "eslint": "^10.0.2",
+    "mitata": "^1.0.34",
     "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.56.1"
   },
   "keywords": [
     "streams",
@@ -31,6 +37,7 @@
   "dependencies": {
     "effect": "^3.19.19",
     "effect-v4": "npm:effect@4.0.0-beta.25",
+    "@slidev/theme-default": "^0.25.0",
     "experimental-fast-webstreams": "^0.0.18"
   },
   "repository": {

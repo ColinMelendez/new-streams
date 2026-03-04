@@ -16,8 +16,12 @@ import type {
   Drainable,
 } from './types.js';
 import { drainableProtocol } from './types.js';
-import { toUint8Array } from './utils.js';
+import { toUint8Array, allUint8Array } from './utils.js';
 import { pull as pullWithTransforms } from './pull.js';
+import { RingBuffer } from './ringbuffer.js';
+
+// Cached resolved promise to avoid allocating a new one on every sync fast-path.
+const kResolvedPromise: Promise<void> = Promise.resolve();
 
 // =============================================================================
 // Internal Queue State
@@ -53,7 +57,7 @@ interface PendingDrain {
  *
  * This implements the core buffering logic shared between writer and readable.
  * - Chunk-oriented backpressure: counts write/writev calls, not bytes
- * - Configurable highWaterMark (default: 1)
+ * - Configurable highWaterMark (default: 4)
  * - Four backpressure policies: strict, block, drop-oldest, drop-newest
  *
  * The queue has two parts:
@@ -68,13 +72,13 @@ interface PendingDrain {
  */
 class PushQueue {
   /** Buffered chunks (each slot is from one write/writev call) */
-  private slots: Uint8Array[][] = [];
+  private slots = new RingBuffer<Uint8Array[]>();
 
   /** Pending writes waiting for buffer space (strict policy only) */
-  private pendingWrites: PendingWrite[] = [];
+  private pendingWrites = new RingBuffer<PendingWrite>();
 
   /** Pending reads waiting for data */
-  private pendingReads: PendingRead[] = [];
+  private pendingReads = new RingBuffer<PendingRead>();
 
   /** Pending drains waiting for backpressure to clear */
   private pendingDrains: PendingDrain[] = [];
@@ -100,7 +104,7 @@ class PushQueue {
   private abortHandler?: () => void;
 
   constructor(options: PushStreamOptions = {}) {
-    this.highWaterMark = Math.max(1, options.highWaterMark ?? 1);
+    this.highWaterMark = Math.max(1, options.highWaterMark ?? 4);
     this.backpressure = options.backpressure ?? 'strict';
     this.signal = options.signal;
 
@@ -277,7 +281,7 @@ class PushQueue {
       const onAbort = () => {
         // Remove from queue so it doesn't occupy a slot
         const idx = this.pendingWrites.indexOf(entry);
-        if (idx !== -1) this.pendingWrites.splice(idx, 1);
+        if (idx !== -1) this.pendingWrites.removeAt(idx);
         reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
       };
 
@@ -423,10 +427,9 @@ class PushQueue {
    */
   private drain(): Uint8Array[] {
     const result: Uint8Array[] = [];
-    for (const slot of this.slots) {
-      result.push(...slot);
+    while (this.slots.length > 0) {
+      result.push(...this.slots.shift()!);
     }
-    this.slots = [];
     return result;
   }
 
@@ -500,10 +503,8 @@ class PushQueue {
    * Reject all pending reads with an error.
    */
   private rejectPendingReads(error: Error): void {
-    const reads = this.pendingReads;
-    this.pendingReads = [];
-    for (const pending of reads) {
-      pending.reject(error);
+    while (this.pendingReads.length > 0) {
+      this.pendingReads.shift()!.reject(error);
     }
   }
 
@@ -511,10 +512,8 @@ class PushQueue {
    * Reject all pending writes with an error.
    */
   private rejectPendingWrites(error: Error): void {
-    const writes = this.pendingWrites;
-    this.pendingWrites = [];
-    for (const pending of writes) {
-      pending.reject(error);
+    while (this.pendingWrites.length > 0) {
+      this.pendingWrites.shift()!.reject(error);
     }
   }
 
@@ -574,14 +573,24 @@ class PushWriter implements Writer, Drainable {
     return this.queue.desiredSize;
   }
 
-  async write(chunk: Uint8Array | string, options?: WriteOptions): Promise<void> {
+  write(chunk: Uint8Array | string, options?: WriteOptions): Promise<void> {
+    if (!options?.signal && this.queue.canWriteSync()) {
+      const bytes = toUint8Array(chunk);
+      this.queue.writeSync([bytes]);
+      return kResolvedPromise;
+    }
     const bytes = toUint8Array(chunk);
-    await this.queue.writeAsync([bytes], options?.signal);
+    return this.queue.writeAsync([bytes], options?.signal);
   }
 
-  async writev(chunks: (Uint8Array | string)[], options?: WriteOptions): Promise<void> {
-    const bytes = chunks.map(c => toUint8Array(c));
-    await this.queue.writeAsync(bytes, options?.signal);
+  writev(chunks: (Uint8Array | string)[], options?: WriteOptions): Promise<void> {
+    if (!options?.signal && this.queue.canWriteSync()) {
+      const bytes = allUint8Array(chunks) ? chunks.slice() : chunks.map(c => toUint8Array(c));
+      this.queue.writeSync(bytes);
+      return kResolvedPromise;
+    }
+    const bytes = allUint8Array(chunks) ? chunks.slice() : chunks.map(c => toUint8Array(c));
+    return this.queue.writeAsync(bytes, options?.signal);
   }
 
   writeSync(chunk: Uint8Array | string): boolean {
@@ -598,22 +607,23 @@ class PushWriter implements Writer, Drainable {
     if (!this.queue.canWriteSync()) {
       return false;
     }
-    const bytes = chunks.map(c => toUint8Array(c));
+    const bytes = allUint8Array(chunks) ? chunks.slice() : chunks.map(c => toUint8Array(c));
     return this.queue.writeSync(bytes);
   }
 
-  async end(options?: WriteOptions): Promise<number> {
+  end(_options?: WriteOptions): Promise<number> {
     // end() on PushQueue is synchronous (sets state, resolves pending reads).
     // Signal accepted for interface compliance but there is nothing to cancel.
-    return this.queue.end();
+    return Promise.resolve(this.queue.end());
   }
 
   endSync(): number {
     return this.queue.end();
   }
 
-  async fail(reason?: Error): Promise<void> {
+  fail(reason?: Error): Promise<void> {
     this.queue.fail(reason);
+    return kResolvedPromise;
   }
 
   failSync(reason?: Error): boolean {

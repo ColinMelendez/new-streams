@@ -138,7 +138,7 @@ function push(
 Returns a [Writer](#writer-interface) and an async iterable readable.
 
 **Options:**
-- `highWaterMark?: number` - Max pending writes before backpressure (default: 1)
+- `highWaterMark?: number` - Max pending writes before backpressure (default: 4)
 - `backpressure?:` [BackpressurePolicy](#backpressure-policy) - Policy when buffer full (default: 'strict')
 - `signal?: AbortSignal` - Cancellation signal
 
@@ -269,7 +269,7 @@ function duplex(options?: DuplexOptions): [DuplexChannel, DuplexChannel]
 ```
 
 **Options:**
-- `highWaterMark?: number` - Buffer size for both directions (default: 1)
+- `highWaterMark?: number` - Buffer size for both directions (default: 4)
 - `backpressure?:` [BackpressurePolicy](#backpressure-policy) - Policy for both directions (default: 'strict')
 - `a?: DuplexDirectionOptions` - Options specific to the A→B direction (overrides shared options)
 - `b?: DuplexDirectionOptions` - Options specific to the B→A direction (overrides shared options)
@@ -1097,6 +1097,11 @@ buffering system. Think of it like a bucket (slots) being filled through a hose
 ```
 
 When both the slots and pending writes are full, backpressure is signaled.
+
+> **Note:** `highWaterMark` is clamped to a minimum of 1. Passing 0 (or negative
+> values) is treated as 1. With `highWaterMark: 0`, strict mode would reject
+> every write and block mode would deadlock, so the clamp prevents these
+> degenerate cases.
 
 **The Two Buffers:**
 

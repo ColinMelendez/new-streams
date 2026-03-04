@@ -140,7 +140,7 @@
     async function newStreamShare2(chunks) {
       async function* source() {
         for (const chunk of chunks) {
-          yield chunk;
+          yield [chunk];
         }
       }
       
@@ -162,7 +162,7 @@
     function newStreamShareSync2(chunks) {
       function* source() {
         for (const chunk of chunks) {
-          yield chunk;
+          yield [chunk];
         }
       }
       

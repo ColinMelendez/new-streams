@@ -2,7 +2,7 @@
 
 **Status:** Design Discussion
 **Date:** February 2026
-**Related:** [Transfer Protocol Proposal](https://github.com/jasnell/proposal-transfer-protocol), [API.md](API.md), [DESIGN.md](DESIGN.md)
+**Related:** [Transfer Protocol Proposal](https://github.com/jasnell/proposal-transfer-protocol), [API.md](../API.md), [DESIGN.md](DESIGN.md)
 
 This document explores how a **As-yet no-official-status** [TC-39 Transfer Protocol pre-proposal](https://github.com/jasnell/proposal-transfer-protocol) (`Symbol.transfer` / `Object.transfer()`) could apply to the new streams API. The Transfer Protocol would offer an ownership primitive that could complement the new streams API's intentional omission of the Web Streams locking model.
 
@@ -924,5 +924,5 @@ A polyfill would be sufficient to validate the patterns in this document and to 
 | [Transfer Protocol Proposal](https://github.com/jasnell/proposal-transfer-protocol) | TC-39 proposal for `Symbol.transfer` / `Object.transfer()` |
 | [Cross-Realm Iterator Transfer](https://github.com/jasnell/proposal-transfer-protocol/blob/main/CROSS-REALM-ITERATOR-TRANSFER.md) | Companion proposal for `postMessage()` iterator transfer |
 | [DESIGN.md](DESIGN.md) | New streams API design document |
-| [API.md](API.md) | New streams API reference |
-| [README.md](README.md) | Motivation and design principles |
+| [API.md](../API.md) | New streams API reference |
+| [README.md](../README.md) | Motivation and design principles |

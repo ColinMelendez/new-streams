@@ -3,8 +3,8 @@ motivation for its creation.
 
 The src directory contains a reference implementation of that new API.
 
-The REQUIREMENTS.md file lists testable requirements with IDs derived from the
-design document.
+The REQUIREMENTS.md file (in docs/) lists testable requirements with IDs derived from
+the design document.
 
 The samples directory contains example programs demonstrating how to use the new
 streams API.
@@ -15,8 +15,8 @@ API to web streams.
 The discussion directory holds documents discussing design decisions and
 hypothetical scenarios related to the new streams API.
 
-The MIGRATION.md file provides guidance on migrating from web streams to the
-new streams API.
+The MIGRATION.md file (in docs/) provides guidance on migrating from web streams to
+the new streams API.
 
 The API.md file contains a detailed API doc for the new streams API.
 

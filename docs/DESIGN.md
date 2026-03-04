@@ -906,8 +906,8 @@ namespace SyncShare {
 
 | Document | Description |
 |----------|-------------|
-| [API.md](API.md) | Complete API reference for the reference implementation |
-| [README.md](README.md) | Motivation and criticism of Web Streams API |
+| [API.md](../API.md) | Complete API reference for the reference implementation |
+| [README.md](../README.md) | Motivation and criticism of Web Streams API |
 | [MIGRATION.md](MIGRATION.md) | Guide for migrating from Web Streams API |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Detailed requirements and test specifications |
 | [REFACTOR-TODO.md](REFACTOR-TODO.md) | Implementation notes and session history |
